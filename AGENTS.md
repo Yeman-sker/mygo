@@ -111,7 +111,10 @@ Windows GUI tests need Windows with the WebView2 Runtime (a GitHub Actions
   keep the generated example (`examples/native-module`) up to date, which
   `TestExampleUpToDate` checks, and change the Swift glue in
   `internal/nativegen/support.go` with `TestScaffoldBuilds` passing
-  without warnings.
+  without warnings. The Rust and Zig glue (`rustsupport.go`,
+  `zigsupport.go`) is checked by the roundtrip module built in each
+  language: `go run ./cmd/mygo native build -target host -lang <swift|rust|zig>
+  native/internal/roundtrip && go test ./native/internal/roundtrip`.
 - Official plugins live in `plugins/<name>`: the Go package and its npm
   package (`@mygo-plugins/<name>`) side by side, released with
   mygo-runtime's version. The updater plugin is Go only; its `native`

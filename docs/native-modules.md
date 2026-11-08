@@ -1,27 +1,35 @@
 # Native modules
 
-A native module is a Go interface implemented in a platform's own
-language. You declare the interface in Go, implement what MyGo generates
-from it for each platform you support, and call it from Go like any other
-Go value: with `context.Context`, errors, iterators and callbacks, checked
-by the Go compiler on one side and the platform's compiler on the other.
+A native module is a Go interface implemented in Swift, Rust or Zig. You
+declare the interface in Go, implement what MyGo generates from it, and
+call it from Go like any other Go value: with `context.Context`, errors,
+iterators and callbacks, checked by the Go compiler on one side and
+Swift's, Rust's or Zig's on the other. There is no cgo, and nothing to
+write by hand between the two.
 
-Use one for what a platform offers only in its own language: its
-frameworks, its packages and libraries, and its views, shown in native UI.
+Use one for what Go lacks or does slowly:
 
-A module keeps an implementation per platform, each in a directory of its
-own, built with that platform's tools:
+- what macOS offers in Swift only: its frameworks (NaturalLanguage, Vision,
+  AVFoundation, Speech …), Swift packages, and views shown in native UI;
+- a Rust crate or a Zig or C library, such as a parser, a codec, a
+  database or an inference engine, on every platform.
+
+A module keeps each implementation in a directory named after its
+language, built with that language's tools:
 
 | Directory | Language | Runs on |
 |---|---|---|
-| `apple/` | Swift, as a Swift package | macOS |
+| `swift/` | Swift, as a Swift package | macOS (and Linux under `go test`, with Foundation alone) |
+| `rust/` | Rust, as a crate | macOS, Linux, Windows |
+| `zig/` | Zig, as a package | macOS, Linux, Windows |
 
-`apple/` is a Swift package for Apple's platforms, which may target more of
-them as MyGo runs there; other platforms will get directories and languages
-of their own, behind the same Go interface. The Go side says what a module
-does, and each directory how. On a platform the module has no
-implementation for, its constructors return `errors.ErrUnsupported`, so the
-app compiles everywhere and decides what to do without it.
+A module may have several: each platform gets one, Swift on macOS where
+there is one, and otherwise Rust, then Zig. So a module can use Apple's
+frameworks on macOS and a Rust crate elsewhere, behind the same Go
+interface. The Go side says what a module does, and each directory how. On
+a platform the module has no implementation for, its constructors return
+`errors.ErrUnsupported`, so the app compiles everywhere and decides what to
+do without it.
 
 The Go side:
 
@@ -54,7 +62,7 @@ type Token struct {
 }
 ```
 
-Its implementation in `apple/`, with NaturalLanguage:
+Its implementation in `swift/`, with NaturalLanguage:
 
 ```swift
 import NaturalLanguage
@@ -100,52 +108,67 @@ for tok, err := range a.Tokens(ctx, text, language.Sentence) {
 ```
 
 The interface is the only declaration. `mygo generate` writes the rest:
-`NewAnalyzer` in Go, and for each platform the declarations its
+`NewAnalyzer` in Go, and for each language the declarations its
 implementation must satisfy, here the Swift protocol `Analyzer`, the struct
-`Token`, the enums `Unit` and `LanguageError`, with the glue between them.
-Change the interface and every implementation stops compiling until it
-matches; forget a method and the platform's compiler names it.
+`Token`, the enums `Unit` and `LanguageError`, with the glue between them;
+in Rust a trait `Analyzer`, in Zig a struct that checks at compile time
+that yours has every method (see [Rust and Zig](#rust-and-zig)). Change the
+interface and every implementation stops compiling until it matches;
+forget a method and the language's compiler names it.
 
 ## Create a module
 
 ```sh
-mygo native new [-platform <platforms>] <module name>
+mygo native new [-lang <languages>] <module name>
 ```
 
 makes a module named `<module name>` in `modules/<module name>` of the app,
 or at the path you give instead of a name, such as `internal/<module name>`.
-`-platform` names the directories to implement it in, separated by commas:
-`apple` by default. `-platform none` makes the Go side alone, to agree on
-the interface first and implement it later.
+`-lang` names the languages to implement it in, separated by commas:
+`swift` by default, `rust`, `zig`. `-lang none` makes the Go side alone, to
+agree on the interface first and implement it later.
 
 ```
 modules/<module name>/
 ├── <module name>.go              # the interface: yours
 ├── <module name>_native.go       # generated
 ├── AGENTS.md                     # how to write and check the module, for agents
-└── apple/
-    ├── Package.swift             # the Swift package: yours, for its dependencies
-    ├── Info.plist                # optional: keys added to the app's Info.plist
-    ├── Entitlements.plist        # optional: entitlements added to the app's
-    └── Sources/<Module>/
-        ├── <Module>.swift        # the implementation: yours
-        └── <Module>.mygo.swift   # generated
+├── mygo-plugin.json              # optional: its published builds (see publishing)
+├── swift/
+│   ├── Package.swift             # the Swift package: yours, for its dependencies
+│   ├── Info.plist                # optional: keys added to the app's Info.plist
+│   ├── Entitlements.plist        # optional: entitlements added to the app's
+│   └── Sources/<Module>/
+│       ├── <Module>.swift        # the implementation: yours
+│       └── <Module>.mygo.swift   # generated
+├── rust/
+│   ├── Cargo.toml                # the crate: yours, for its dependencies
+│   └── src/
+│       ├── lib.rs                # the implementation: yours
+│       └── mygo.rs               # generated
+└── zig/
+    ├── build.zig                 # yours, with build.zig.zon for dependencies
+    └── src/
+        ├── <module name>.zig     # the implementation: yours
+        └── mygo.zig              # generated, the library's root
 ```
 
 The module's name is its Go package's, so it is a valid package name, such
 as `language` or `media`. `<Module>` is the name in upper camel case, the
-name of the Swift module: `Language` for `language`.
+name of the Swift module and of the library: `Language` for `language`,
+built as `libLanguage.dylib`, `libLanguage.so` and `Language.dll`.
 
-To implement an existing module in another directory:
+To implement an existing module in another language:
 
 ```sh
-mygo native add <platform> [module dir]
+mygo native add <language> [module dir]
 ```
 
-makes the directory in the module, the current directory by default, with
-a factory for every entry point and a class whose every method says it is
-unsupported, so the module builds at once and the methods are implemented
-one at a time.
+makes the language's directory in the module, the current directory by
+default, with a factory for every entry point and an implementation whose
+every method says it is unsupported, so the module builds at once and the
+methods are implemented one at a time. Rust and Zig refuse a module that
+uses what only Swift implements (see [Rust and Zig](#rust-and-zig)).
 
 A module is an ordinary Go package. Import it from the app, or from any Go
 module: `mygo dev` and `mygo build` find every package of the app with an
@@ -154,9 +177,9 @@ the platform they build for and put it into the app. There is nothing to
 register.
 
 Commit the generated files. `<module name>_native.go` lets the app compile,
-vet and test on any machine, with or without the platform's tools, and
-`<Module>.mygo.swift`, which holds the protocols, structs and enums of the
-Go side and the `@_cdecl` functions Go calls, lets SourceKit-LSP and Xcode
+vet and test on any machine, with or without the languages' tools, and
+`<Module>.mygo.swift`, `mygo.rs` and `mygo.zig`, which hold the
+declarations of the Go side and the C functions Go calls, let editors
 complete and check the implementation; never edit them. They say which
 interface they came from, and `mygo build` refuses to build when one is
 older than the interface.
@@ -173,9 +196,9 @@ Make the value once, as you would open a file, and keep it.
 
 **Factories.** Each implementation chooses what implements an entry point
 with a factory named after it, which the generated code calls and the
-compiler requires: in Swift, `makeAnalyzer` for `Analyzer`. Without it the
-package does not compile, and Swift says
-`cannot find 'makeAnalyzer' in scope`.
+compiler requires: `makeAnalyzer` for `Analyzer` in Swift and Zig,
+`make_analyzer` in Rust. Without it the package does not compile, and
+Swift says `cannot find 'makeAnalyzer' in scope`.
 
 ```swift
 func makeAnalyzer() throws -> any Analyzer {
@@ -186,10 +209,10 @@ func makeAnalyzer() throws -> any Analyzer {
 
 The factory may throw, and the constructor returns its error.
 `NativeError.unsupported` reaches Go as `errors.ErrUnsupported`, for what
-the system lacks, such as a framework of a newer version. The systems an
-implementation runs on are those its `Package.swift` lists in `platforms`:
-on others, and on platforms with no implementation, the constructor returns
-`errors.ErrUnsupported` without asking.
+the system lacks, such as a framework of a newer version. The macOS
+versions a Swift implementation runs on are those its `Package.swift` lists
+in `platforms`: on older ones, and on platforms with no implementation, the
+constructor returns `errors.ErrUnsupported` without asking.
 
 **Other interfaces.** The interfaces that the methods of an entry point
 take or return are part of the module too, and generated with it, without
@@ -210,7 +233,8 @@ Go's own way, by embedding:
 
 **Threads.** A comment `//mygo:mainthread` before an interface runs all its
 methods on the main thread; before a method, that method. In Swift they are
-`@MainActor`. Views run on the main thread without it.
+`@MainActor`; Rust and Zig are called on the main thread. Views run on the
+main thread without it.
 
 The Go doc comments of the interfaces, their methods and their types become
 the documentation comments of the generated code, so every implementation
@@ -226,6 +250,8 @@ A method may:
 - return nothing, a value, an error, a value and an error, an
   `iter.Seq[T]` or an `iter.Seq2[T, error]`, or an `io.Closer` that stops
   what the method started (see [subscriptions](#subscriptions)).
+
+In Swift (Rust's and Zig's are [below](#rust-and-zig)):
 
 | Go | Swift |
 |---|---|
@@ -344,7 +370,153 @@ code and `localizedDescription`. `NativeError.unsupported` reaches Go as
 
 A crash in the implementation, such as `fatalError`, a force unwrap of
 `nil` or an index out of range, ends the app, as a panic Go does not
-recover would.
+recover would. A Rust panic is caught at the boundary instead, and reaches
+Go as an error.
+
+## Rust and Zig
+
+The same module implemented in Rust, on every platform: `rust/` is a crate
+whose `lib.rs` declares the generated `mod mygo;` and implements its trait,
+with a crate from crates.io in `Cargo.toml`:
+
+```rust
+mod mygo;
+
+use mygo::*;
+use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
+
+pub fn make_analyzer() -> Result<Arc<dyn Analyzer>, Error> {
+    Ok(Arc::new(Segmenter))
+}
+
+struct Segmenter;
+
+impl Analyzer for Segmenter {
+    fn detect_language(&self, _text: String) -> Result<String, Error> {
+        Err(Error::Unsupported) // errors.ErrUnsupported in Go
+    }
+
+    fn tokens(&self, _ctx: &Context, text: String, unit: Unit) -> Stream<Result<Token, Error>> {
+        let found: Vec<(usize, &str)> = match unit {
+            Unit::Word => text.unicode_word_indices().collect(),
+            _ => text.split_sentence_bound_indices().collect(),
+        };
+        let tokens: Vec<_> = found
+            .into_iter()
+            .map(|(i, s)| Ok(Token { start: i as i64, end: (i + s.len()) as i64, text: s.to_string() }))
+            .collect();
+        stream_of(tokens.into_iter())
+    }
+}
+```
+
+And in Zig: `zig/src/<module name>.zig` holds the factory and a struct with
+a method per method of the interface, which the generated `mygo.zig`, the
+library's root, checks at compile time and calls:
+
+```zig
+const std = @import("std");
+const mygo = @import("mygo.zig");
+const Allocator = std.mem.Allocator;
+
+pub fn makeAnalyzer() mygo.Error!mygo.Analyzer {
+    const a = try mygo.allocator.create(Analyzer);
+    a.* = .{};
+    return mygo.Analyzer.of(a);
+}
+
+const Analyzer = struct {
+    pub fn detectLanguage(_: *Analyzer, _: Allocator, _: []const u8) mygo.Error![]const u8 {
+        return error.Unsupported;
+    }
+
+    pub fn tokens(_: *Analyzer, _: Allocator, _: *mygo.Context, text: []const u8, _: mygo.Unit) mygo.Error!mygo.Iterator(mygo.Token) {
+        const w = try mygo.allocator.create(Words);
+        w.* = .{ .it = std.mem.tokenizeScalar(u8, text, ' '), .text = text };
+        return mygo.Iterator(mygo.Token).of(w);
+    }
+
+    pub fn deinit(self: *Analyzer) void {
+        mygo.allocator.destroy(self);
+    }
+};
+
+const Words = struct {
+    it: std.mem.TokenIterator(u8, .scalar),
+    text: []const u8,
+
+    pub fn next(self: *Words, _: Allocator) mygo.Error!?mygo.Token {
+        const w = self.it.next() orelse return null;
+        const start: i64 = @intCast(@intFromPtr(w.ptr) - @intFromPtr(self.text.ptr));
+        return .{ .start = start, .end = start + @as(i64, @intCast(w.len)), .text = w };
+    }
+
+    pub fn deinit(self: *Words) void {
+        mygo.allocator.destroy(self);
+    }
+};
+```
+
+| Go | Rust | Zig |
+|---|---|---|
+| `M(a int, b string)` | `fn m(&self, a: i64, b: String)` | `pub fn m(self: *T, arena: Allocator, a: i64, b: []const u8) void` |
+| `M(...) error` | `-> Result<(), Error>` | `mygo.Error!void` |
+| `M(...) (T, error)` | `-> Result<T, Error>` | `mygo.Error!T` |
+| `M(ctx context.Context, ...)` | `ctx: &Context` first | `ctx: *mygo.Context` after the arena |
+| `iter.Seq2[T, error]` | `Stream<Result<T, Error>>`, from `stream_of(iterator)` | `mygo.Iterator(T)`, from `Iterator(T).of(p)` |
+| `iter.Seq[T]` | `Stream<T>` | `mygo.Iterator(T)` |
+| `onChange func(float64)` | `Arc<dyn Fn(f64) + Send + Sync>` | `mygo.<Interface><Method><Param>`, with `call` |
+| `check func(string) error` | `Arc<dyn Fn(String) -> Result<(), Error> + Send + Sync>` | the same, whose `call` returns `mygo.Error!void` |
+| `M(...) io.Closer` | `-> Box<dyn Closer>`, from `closer(f)` | `mygo.Error!mygo.Closer`, from `Closer.of(p)` |
+| an interface of the module | `Arc<dyn I>` | `mygo.I`, from `I.of(p)` |
+| an interface Go implements | `Arc<dyn I>`, whose methods call Go | `mygo.I`, whose methods call Go |
+
+| Go | Rust | Zig |
+|---|---|---|
+| `bool`, `int`, `int64`, `uint8` … | `bool`, `i64`, `i64`, `u8` … | `bool`, `i64`, `i64`, `u8` … |
+| `float32`, `float64` | `f32`, `f64` | `f32`, `f64` |
+| `string`, `[]byte` | `String`, `Vec<u8>` | `[]const u8` |
+| `time.Time`, `time.Duration` | `SystemTime`, `Duration` | `mygo.Time`, `i64` nanoseconds |
+| `[]T`, `map[string]T` | `Vec<T>`, `HashMap<String, T>` | `[]const T`, `[]const mygo.Entry(T)` |
+| `*T` | `Option<T>` | `?T` |
+| a struct, an enum of the package | a `struct`, an `enum` | a `struct` with defaults, an `enum` |
+| `*native.Buffer` (a parameter) | `Buffer`, with `bytes_mut()` | `mygo.Buffer`, with `bytes()` |
+
+Names follow each language: methods and fields are snake case in Rust
+(`detect_language`) and lower camel case in Zig (`detectLanguage`), and Go
+names that are keywords are escaped (`r#type`, `@"type"`).
+
+**Errors.** The package's errors are an enum, `LanguageError::Undetermined`
+in Rust (`?` turns it into an `Error`) and `error.Undetermined` in Zig.
+`Error::Unsupported` and `error.Unsupported` reach Go as
+`errors.ErrUnsupported`; any other error as a `*native.Error` with a domain,
+number and message, which Rust writes `Error::Other { domain, number,
+message }` (or `Error::other(message)`) and Zig `mygo.fail(domain, number,
+message)`.
+
+**Threads.** A method without a context runs on the calling goroutine's
+thread, and one with a context on a thread of its own: Rust's `Context` and
+Zig's `mygo.Context` say when Go canceled it (`is_canceled`, `isCanceled`)
+and sleep until then (`sleep`). A stream runs on a thread of its own, which
+asks the iterator for each value Go's loop wants. Implementations are
+called from any thread, so Rust's traits are `Send + Sync`, and state they
+change needs a `Mutex` or atomics.
+
+**Memory in Zig.** Each call gets an arena, which holds its arguments and
+is freed once its results are sent: return slices of it, or of the
+arguments, without copying. A stream's arena and arguments last until it
+ends, and each value it yields gets an arena of its own. What outlives the
+call, as objects, iterators and callbacks kept with `keep()`, is allocated
+with `mygo.allocator` and freed in its `deinit`, which Go calls when it
+releases the value. A callback a method keeps past the call is `keep()`ed
+and `release()`d when done.
+
+**What only Swift implements.** Views, textures, windows and the
+interfaces of other modules are Apple's, so a module that uses them is
+implemented in Swift only, and `mygo native add rust` says which of its
+methods stop it. So is returning a `*native.Buffer`, rather than taking
+one.
 
 ## Objects
 
@@ -738,7 +910,7 @@ image, and drawn by a [shader](ui/shaders.md).
 
 ## Dependencies
 
-`apple/Package.swift` is the module's Swift package, and yours to edit:
+`swift/Package.swift` is the module's Swift package, and yours to edit:
 add Swift packages and binary targets to its `dependencies`, link system
 frameworks with `linkerSettings`, and list the systems it runs on in
 `platforms`.
@@ -770,16 +942,22 @@ implementations, whose classes Go calls from its own threads. Dynamic frameworks
 such as an XCFramework's, go into the app's `Contents/Frameworks` with it,
 and `mygo build` signs them all with the app's identity.
 
+`rust/Cargo.toml` is the crate's, whose `[dependencies]` take crates as
+any crate's do; keep its `crate-type = ["cdylib"]`. `zig/build.zig` builds
+the library from `src/mygo.zig`, and `build.zig.zon` fetches Zig packages,
+or a C library's sources for `build.zig` to compile, as the
+[SQLite plugin](plugins/sqlite.md) does.
+
 ## Info.plist and entitlements
 
 Some frameworks need a usage description in the app's `Info.plist`, such as
 Speech, the microphone and the camera, or an entitlement, such as a shared
-keychain or App Groups. Put them in the module's `apple/Info.plist` and
-`apple/Entitlements.plist`, which `mygo build` and `mygo dev` merge into
-the app's:
+keychain or App Groups. Put them in the module's `swift/Info.plist` and
+`swift/Entitlements.plist`, which `mygo build` and `mygo dev` merge into
+the app's on macOS:
 
 ```xml
-<!-- apple/Info.plist -->
+<!-- swift/Info.plist -->
 <plist version="1.0">
 <dict>
     <key>NSSpeechRecognitionUsageDescription</key>
@@ -798,59 +976,38 @@ must allow, such as App Groups, needs one that does
 
 ## Build, run and test
 
-Building a module needs the platform's tools: for `apple/`, Xcode or its
-Command Line Tools, with Swift 6.
+Building a module needs its language's tools: for `swift/`, Xcode or its
+Command Line Tools, with Swift 6; for `rust/`, cargo
+([rustup](https://rustup.rs)); for `zig/`, [Zig](https://ziglang.org) 0.16.
+`mygo doctor` says which are installed.
 
 `mygo dev` regenerates the module when its interface changes, rebuilds the
-implementation in debug mode when one of its files changes, and restarts
-the app, which reopens its windows where they were. `mygo build` builds the
-implementation of every module in release mode, universal for arm64 and
-x86_64, and signs it with the frameworks it brings, before it signs and
-notarizes the app ([distribution](distribution.md)).
+implementation for this machine when one of its files changes, and
+restarts the app, which reopens its windows where they were. `mygo build`
+builds the implementation of every module for the platform it builds for,
+in release mode: Swift universal for arm64 and x86_64, signed with the
+frameworks it brings, before it signs and notarizes the app
+([distribution](distribution.md)), and Rust and Zig as the libraries of
+each architecture, among the app's resources. cargo and Zig keep their
+files in `.mygo/native` of the Go module, not in the module's directories:
+keep `.mygo/` in your `.gitignore`, as the projects `mygo init` makes do.
 
-A module's implementation is a [native library](native-libraries.md),
-built and published as Rust and Zig ones are. To build an app on a machine
-without the platform's tools, such as a Linux runner of GitHub Actions,
-publish the module's builds from a Mac:
+`go test` and `go run` run the implementation of the platform they run on
+once `mygo generate`, or `mygo native build -target host`, has built it;
+they say to run it when the build is missing or older than the sources.
+`-lang` builds another of the module's languages instead, to test each:
 
 ```sh
-mygo native build -upload [module dir]
+mygo native build -target host -lang rust ./modules/language && go test ./modules/language
+mygo native build -target host -lang zig ./modules/language && go test ./modules/language
 ```
 
-builds the implementation, universal, into a `.tar.gz` with the frameworks
-it brings, uploads it as a release asset of the app's repository and
-records it in `mygo-plugin.json` next to the module, under
-`darwin-universal`, as the [terminal](plugins/terminal.md) plugin ships
-libghostty-vt: every machine then downloads that build instead of compiling
-it, while it matches the sources. It uploads with the
-[GitHub CLI](https://cli.github.com) to the release `native-libraries` of
-the repository of the module's git checkout, which it creates once, not as
-the latest release, or to the `-release` URL; every library's builds go
-there. Each file is named after its SHA-256 and never replaced, so the
-builds that older commits record stay downloadable. Without `-upload`, it
-only builds the archive. Commit `mygo-plugin.json`.
-
-The hash it records covers the Swift package's sources, with line endings
-as LF so that checkouts on every platform agree, and those of the native
-modules the module uses. A module whose recorded build matches them is
-left alone, so publishing on every push, in a macOS job of CI, uploads
-only what changed; `-force` builds it again. Publish each module the app
-uses: a module's archive holds its own library, not those of the modules
-it uses.
-
-`mygo build` takes the published implementation while its hash is the
-sources', and `mygo dev` where Swift is missing; once the sources change,
-a machine with Swift builds them, with a warning, and one without stops
-and says to publish them again.
-
-`go test` runs the implementation of the platform it runs on once
-`mygo generate`, or `mygo native build -target host`, has built it; it says
-to run it when the build is missing or older than the sources. On Linux,
-the same commands build the Swift of a module that uses only Foundation
-with a [Swift toolchain](https://www.swift.org/install/linux/), as the
-images of GitHub's Ubuntu runners have, so its tests run in a Linux job
-too; apps run native modules on macOS only. Code that takes the interface, rather than the
-constructor's result, is tested anywhere with a fake of it:
+On Linux, the same commands build the Swift of a module that uses only
+Foundation with a [Swift toolchain](https://www.swift.org/install/linux/),
+as the images of GitHub's Ubuntu runners have, so its tests run in a Linux
+job too; apps run Swift on macOS only. Code that takes the interface,
+rather than the constructor's result, is tested anywhere with a fake of
+it:
 
 ```go
 type fakeAnalyzer struct{ lang string }
@@ -864,9 +1021,86 @@ func (f fakeAnalyzer) Tokens(ctx context.Context, text string, unit language.Uni
 }
 ```
 
-To stop at a breakpoint in Swift, attach Xcode's debugger to the app that
-`mygo dev` runs (Debug ▸ Attach to Process), or `lldb -p <pid>`. What Swift
-logs with `Logger` or `print` shows in `mygo dev`'s output, beside Go's.
+To stop at a breakpoint in the implementation, attach a debugger to the
+app that `mygo dev` runs: Xcode's (Debug ▸ Attach to Process), or
+`lldb -p <pid>` and `gdb -p <pid>`. What it logs, with `Logger`, `print`,
+`eprintln!` or `std.debug.print`, shows in `mygo dev`'s output, beside
+Go's.
+
+## Publish a module
+
+Apps whose modules are their own, or in a Go module they replace with a
+directory, build them from their sources. Apps that use your module from
+the module cache, and machines without its language, such as a Linux
+runner of GitHub Actions building a macOS app, use its published builds
+instead. `mygo native build` makes them:
+
+```sh
+mygo native build -upload [module dir]
+```
+
+builds the implementation for macOS, Linux and Windows on amd64 and arm64,
+each in its language there, uploads the files as the assets of a GitHub
+release, and records them in `mygo-plugin.json` next to the module: their
+names, URLs and SHA-256, and the hash of the sources each was built from.
+Swift is published as one universal file, `darwin-universal`, a `.tar.gz`
+of the library and the frameworks it brings. Commit `mygo-plugin.json`:
+every machine then downloads those builds instead of compiling them, while
+they match the sources.
+
+It uploads with the [GitHub CLI](https://cli.github.com) to the release
+`native-libraries` of the repository of the module's git checkout, which
+it creates once, not as the latest release, or to the `-release` URL;
+every library's builds go there. Each file is named after its SHA-256 and
+never replaced, so the builds that older commits record stay
+downloadable. Without `-upload`, it writes the files into
+`.mygo/native/release` of the Go module, for you to publish under
+`-release`.
+
+The hash of the sources covers the files of the language's directory,
+with line endings as LF so that checkouts on every platform agree, and,
+for Swift, those of the native modules the module uses. A platform whose
+recorded build matches them is left alone, so publishing on every push
+uploads only what changed; `-force` builds it again. Publish each module
+the app uses: a module's Swift archive holds its own library, not those of
+the modules it uses.
+
+`mygo build` takes the published build while its hash is the sources', and
+`mygo dev` where the language's tools are missing; once the sources
+change, a machine with the tools builds them, with a warning, and one
+without stops and says to publish them again.
+
+Platforms that fail to build are listed at the end, and left as they were
+in `mygo-plugin.json`, so each can be built where it is easiest:
+
+- **Swift** builds on a Mac.
+- **Zig** cross-compiles to every platform, macOS included.
+- **Rust** needs each target (`rustup target add aarch64-unknown-linux-gnu`
+  …) and a linker for it: with
+  [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
+  installed, the CLI links Linux and Windows libraries with Zig. macOS
+  libraries need Apple's SDK: build them on a Mac.
+
+```sh
+mygo native build -target darwin-arm64,darwin-amd64 -upload ./modules/language   # on a Mac
+mygo native build -target linux-amd64,linux-arm64,windows-amd64,windows-arm64 -upload ./modules/language
+```
+
+Linux libraries are linked against glibc 2.28 (by Zig, and by
+cargo-zigbuild when it is installed), so that they load on Debian 10,
+Ubuntu 20.04 and later. macOS libraries that `mygo dev` and `mygo build`
+build support the app's `macOS.minimumSystemVersion`, and published ones
+macOS 12 and later. The CLI removes debug information from the Linux
+libraries it builds.
+
+| Flag | |
+|---|---|
+| `-target` | the platforms, `GOOS-GOARCH` separated by commas, `all` (the default) or `host` |
+| `-lang` | builds modules in this language where they have it, rather than each platform's |
+| `-release` | the URL of the directory the files are published in (default: the library's `release`) |
+| `-out` | the directory of the files to publish (default: `.mygo/native/release` of the module) |
+| `-upload` | uploads the files to the GitHub release of `-release` |
+| `-force` | builds the platforms whose published files were built from the sources as they are too |
 
 ## Check and call a module
 
@@ -874,11 +1108,11 @@ Two commands check a module without opening the app, for you and for
 agents:
 
 ```sh
-mygo native check [module dir]
+mygo native check [-lang <language>] [module dir]
 ```
 
-generates the module, builds the implementation of the platform it runs
-on and vets the Go package, then lists every problem as
+generates the module, builds its implementation for this machine (or in
+`-lang`) and vets the Go package, then lists every problem as
 `file:line: message`, with what to change, such as `language.go:14: Tokens
 returns chan Token, which an implementation cannot return: return
 iter.Seq2[Token, error]`. It exits with status 1 when there are problems.
@@ -917,11 +1151,15 @@ mygo.Bind(&Text{a}) // a service whose methods call a
 ## How it works
 
 The generated Go calls the implementation's library, which package `ffi`
-finds and loads as any [native library](native-libraries.md), through
-purego, with no cgo, as MyGo calls the system: one C entry point per
-method, which the generated Swift exports with `@_cdecl`, and one Go
-callback shared by every module, for results of asynchronous methods, the
-values of streams, callbacks, and calls into interfaces Go implements.
+finds and loads, through purego, with no cgo, as MyGo calls the system:
+one C entry point per method, which the generated Swift exports with
+`@_cdecl`, Rust with `#[no_mangle] extern "C"` and Zig with `export`, and
+one Go callback shared by every module, for results of asynchronous
+methods, the values of streams, callbacks, and calls into interfaces Go
+implements. The three languages share this one interface, so Go does not
+know which one it calls. Go gives each library its C runtime's `malloc` and
+`free` when it loads it, with which both sides allocate and free what they
+hand each other.
 
 Values cross in a binary encoding that both sides' generated code writes
 and reads in the order of the declarations, with no reflection and no
@@ -932,5 +1170,256 @@ fields, enums as their values, times as Unix seconds and nanoseconds.
 Results are read in place from the memory the implementation returns them
 in. A method of numbers and bools only, which returns no error, skips even
 that: Go calls its C function with them as registers. Buffers are memory
-both sides map, and textures `IOSurface`s shared with the GPU. An app that has no
-native module links none of this.
+both sides map, and textures `IOSurface`s shared with the GPU. An app that
+has no native module links none of this.
+
+## Bind a C library yourself
+
+A module's generated code is the simplest way to call Rust, Zig or Swift.
+To call a library through its own C functions instead, such as a C library
+that already exists or one a Zig package builds from C sources, bind them
+with package `ffi`: the CLI builds the library from its sources, puts it
+into the app and publishes it as it does a module's. The
+[`rust-native` example](../examples/rust-native) is a window of native UI
+that calls a Rust crate so, and the [SQLite](plugins/sqlite.md) and
+[terminal](plugins/terminal.md) plugins bind C libraries that Zig builds.
+
+Put the library's sources next to the Go package that binds it, as a Rust
+`cdylib` crate, a Zig package whose `build.zig` installs a dynamic library,
+or, on macOS, a Swift package whose product, named as the library, is a
+dynamic library with its functions exported by `@_cdecl`:
+
+```
+adder/
+├── adder.go
+├── mygo-plugin.json
+└── rust/
+    ├── Cargo.toml          # [lib] crate-type = ["cdylib"]
+    └── src/lib.rs
+```
+
+```rust
+// adder/rust/src/lib.rs
+#[no_mangle]
+pub extern "C" fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+```
+
+`mygo-plugin.json` names the library and how it builds:
+
+```json
+{
+  "libraries": [
+    { "name": "adder", "build": { "cargo": "./rust" } }
+  ]
+}
+```
+
+and the Go package embeds it and binds the functions:
+
+```go
+package adder
+
+import (
+	_ "embed"
+
+	"github.com/egoist/mygo/ffi"
+)
+
+//go:embed mygo-plugin.json
+var manifest []byte
+
+var lib = ffi.New("adder", manifest)
+
+var fns struct {
+	Add func(a, b int32) int32
+}
+
+func Add(a, b int32) (int32, error) {
+	if err := lib.Bind(&fns); err != nil {
+		return 0, err
+	}
+	return fns.Add(a, b), nil
+}
+```
+
+`mygo dev` and `mygo build` build it as they do modules, `mygo native
+build` builds it for `go test` (`-target host`) and publishes it, and a
+`go:generate` line in the package builds it for tests:
+
+```go
+//go:generate go tool mygo native build -target host .
+```
+
+`{"zig": "./zig"}` names a Zig package instead, whose library the CLI
+builds with `zig build -Dtarget=<target> -Doptimize=ReleaseFast`, and
+`{"swift": "./swift"}` a Swift package, which builds on macOS, universal,
+and goes into the app's `Frameworks`.
+
+### Binding functions
+
+`Library.Bind` takes a pointer to a struct of functions, which it binds the
+first time; later calls with the same pointer, from any goroutine, return
+the first one's result without binding again, so calling it before each
+use, as above, is safe and cheap. A function bound to nothing, as an
+unknown tag option or a missing function, makes it return an error. A
+field calls the library's function named by its tag, or else its name in
+snake case (`CountVowels` calls `count_vowels`):
+
+```go
+var fns struct {
+	Add         func(a, b int32) int32
+	CountVowels func(s string) uint32
+	Version     func() string `ffi:"adder_version"`
+	Extra       func()        `ffi:"adder_extra,optional"` // nil when the library lacks it
+}
+```
+
+`BindFunc` binds one function, and `Symbol` returns the address of any
+symbol, for `purego.SyscallN` or a pointer to data.
+
+Functions are called through [purego](https://github.com/ebitengine/purego),
+on the calling goroutine, and pass what C does:
+
+| Go | C | Rust |
+|---|---|---|
+| `int8` … `int64`, `uint8` … `uint64`, `int`, `uintptr` | integers of the same size | `i8` … `i64`, `u8` … `u64`, `isize`, `usize` |
+| `float32`, `float64` | `float`, `double` | `f32`, `f64` |
+| `bool` | `bool` | `bool` |
+| `string` argument | `const char *`, valid during the call | `*const c_char` |
+| `string` result | `const char *`, copied | `*const c_char` |
+| `unsafe.Pointer`, `*T` | pointers | `*mut T`, `*const T` |
+| `[]byte` | a pointer to the first byte, valid during the call | `*const u8` (pass the length too) |
+| structs of the types above | structs, whose padding the Go struct must spell out | `#[repr(C)]` structs |
+
+The library must not keep Go memory past the call, as with cgo. A string
+the library returns is copied into Go but not freed, so return static
+strings, or return a pointer (`unsafe.Pointer`) and export a function that
+frees what the library allocated:
+
+```rust
+#[no_mangle]
+pub extern "C" fn greeting(name: *const c_char) -> *mut c_char {
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
+    CString::new(format!("Hello, {name}")).unwrap().into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn free_string(s: *mut c_char) {
+    if !s.is_null() {
+        drop(unsafe { CString::from_raw(s) });
+    }
+}
+```
+
+```go
+var fns struct {
+	Greeting   func(name string) unsafe.Pointer
+	FreeString func(s unsafe.Pointer)
+}
+
+func Greeting(name string) string {
+	p := fns.Greeting(name)
+	defer fns.FreeString(p)
+	return ffi.GoString(p) // copies it
+}
+```
+
+Libraries are loaded once and stay loaded. `ffi` works on macOS, Linux and
+Windows on amd64 and arm64; elsewhere, as in browsers, `Load` returns an
+error that wraps `errors.ErrUnsupported`.
+
+### Where libraries are found
+
+`Library.Load`, and a module's constructors, load the first of:
+
+1. the file `$MYGO_NATIVE_<NAME>` names (`MYGO_NATIVE_ADDER`);
+2. the one among the app's resources (or `Frameworks`), where `mygo dev`
+   and `mygo build` put it, signed with the app on macOS;
+3. the one next to the executable;
+
+and, in programs that are not packaged apps:
+
+4. the one the CLI built, in `.mygo/native/<goos>-<goarch>` of the module
+   of the working directory;
+5. the published one, downloaded once into the user's cache and checked
+   against its SHA-256.
+
+Packaged apps never download libraries: the production builds of `mygo
+build` leave the downloader out, and HTTP with it.
+
+## mygo-plugin.json
+
+The manifest sits next to a Go package that binds libraries, or a native
+module, and names its libraries and their published builds. The CLI finds
+it in every package an app imports. A library being published looks like
+this:
+
+```json
+{
+  "libraries": [
+    {
+      "name": "adder",
+      "build": { "cargo": "./rust", "args": ["--features", "simd"], "macOS": "13.0" },
+      "release": "https://github.com/me/adder/releases/download/native-libraries",
+      "files": {
+        "linux-amd64": {
+          "name": "libadder.so",
+          "url": "https://github.com/me/adder/releases/download/native-libraries/adder-linux-amd64-1a2b3c4d5e6f.so",
+          "sha256": "1a2b3c4d5e6f…",
+          "sourceHash": "9f8e7d6c5b4a…"
+        }
+      }
+    }
+  ]
+}
+```
+
+You write `name` and `build`; `mygo native build` writes `release` and
+`files`. A native module's library is named after the module (`Language`)
+and has no `build`: its languages are how it builds, and `mygo native
+build` writes its entry itself.
+
+**name** identifies the library everywhere: `ffi.New("adder", manifest)`
+finds the library's entry by it, its files are named after it
+(`libadder.dylib`, `libadder.so` and `adder.dll`; a leading `lib` is not
+doubled, and is dropped on Windows), `MYGO_NATIVE_ADDER` (`ffi.EnvVar`)
+names a file to load instead, and an app ships one library of each name,
+even when several of its packages name it. It may hold letters, digits,
+`-`, `_` and `.`.
+
+**build** is how to build the library from sources in the package's
+directory; leave it out for a library you publish by other means.
+
+| Field | |
+|---|---|
+| `cargo` | the directory of a Rust crate (its `Cargo.toml`), as `"./rust"`, whose `crate-type` includes `"cdylib"` |
+| `zig` | the directory of a Zig package (its `build.zig`), as `"./zig"`, which installs a dynamic library |
+| `swift` | the directory of a Swift package (its `Package.swift`), as `"./swift"`, whose product named as the library is a dynamic library; it builds on macOS |
+| `args` | more arguments of `cargo build`, `zig build` or `swift build`; one naming a profile (`--profile`) or an optimize mode (`-Doptimize=…`) replaces the release one |
+| `macOS` | the oldest macOS the library runs on, when it needs a later one than the app's minimum or 12.0 |
+
+Name exactly one of `cargo`, `zig` and `swift`, a directory inside the
+package.
+
+**release** is the URL of the directory the published files go into, as
+`https://github.com/<owner>/<repo>/releases/download/<tag>` for a GitHub
+release, which `-release` sets and later runs reuse. Apps never read it:
+each file has its full `url`.
+
+**files** are the published builds, by `GOOS-GOARCH` (`darwin-arm64`,
+`linux-amd64`, `windows-arm64` …), or `darwin-universal` for one file of
+both macOS architectures, as Swift libraries are:
+
+| Field | |
+|---|---|
+| `name` | the file in apps, as `libadder.so` |
+| `url` | where to download it |
+| `sha256` | its SHA-256: a download that does not match is refused, and the file stays in the user's cache under it |
+| `sourceHash` | the hash of the sources it was built from: the build directory's files (but hidden ones and `target`, `zig-out`, `zig-pkg`, `node_modules`, with LF line endings), `args` and `macOS` |
+
+While `sourceHash` matches the sources, `mygo dev` and `mygo build` use
+the published file, and `mygo native build` skips that platform. A package
+may publish libraries without `build`, built by any means, by writing
+`files` itself, without `sourceHash`.

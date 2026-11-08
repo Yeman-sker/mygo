@@ -101,7 +101,7 @@ framework safely. Read it before changing anything under `internal/`.
 │   ├── shaderir/       its IR; glsl/, hlsl/ and msl/ write it for the GPU renderers, interp/ runs it on the CPU
 │   ├── svg/            SVG parsing and drawing, for icons and images
 │   ├── tsgen/          TypeScript client generator
-│   ├── nativegen/      native modules: reads their Go interfaces, writes their Go and Swift
+│   ├── nativegen/      native modules: reads their Go interfaces, writes their Go, Swift, Rust and Zig
 │   ├── i18ngen/        checks catalogs of messages, writes their Go and TypeScript functions
 │   ├── i18nlink/       what package i18n gives MyGo's own catalog only: a catalog that links no dates
 │   ├── l10n/           MyGo's own strings: the catalog of the controls and menu roles
@@ -142,7 +142,7 @@ framework safely. Read it before changing anything under `internal/`.
 │                       mygo-plugin.json: finding, loading and binding them
 ├── transfer/           immutable data items, representations, lazy providers and drag effects
 ├── netproxy/           the proxy of the system's settings, for Go's HTTP clients
-├── native/             the runtime of native modules: Go interfaces implemented in Swift
+├── native/             the runtime of native modules: Go interfaces implemented in Swift, Rust or Zig
 ├── audio/              sound: players, the mixer, the output of each platform, WAV;
 │                       audio/vorbis and audio/mp3 decode Ogg Vorbis and MP3,
 │                       audio/mp4 MP4 (fragmented too) with ALAC, audio/aac
@@ -5230,7 +5230,9 @@ renderer's (`gputest.Compare`).
 ## Native modules (`native`, `internal/nativegen`)
 
 A native module ([the guide](native-modules.md)) is a Go package whose
-interfaces Swift implements. Three parts make it work:
+interfaces Swift, Rust or Zig implement, each in a directory named after
+the language (`swift/`, `rust/`, `zig/`), all behind one C ABI. Three parts
+make it work:
 
 - **`internal/nativegen`** reads the package with `go/ast` alone (no type
   checking, so it is fast and needs no dependency built): the interfaces
@@ -5247,7 +5249,18 @@ interfaces Swift implements. Three parts make it work:
   (`wire.go`: `_enc_<T>`/`_dec_<T>` in Go, `_mygoWrite_<T>`/`_mygoRead_<T>`
   in Swift, `<T>` named after the type, as `slice_map_int`, and a type of
   another module, whose struct fields name its types relative to it, as
-  `<Module>_<T>`). Both carry `mygo:native <version> <hash>`, the hash of the
+  `<Module>_<T>`). For `rust/` and `zig/` it writes
+  `src/mygo.rs` (`rustgen.go`: a trait per interface, `Send + Sync`,
+  structs, enums, `<Module>Error`, `#[no_mangle] extern "C"` entry points,
+  and the runtime of `rustsupport.go`: threads for calls with a context
+  and for streams, `catch_unwind` at every entry) or `src/mygo.zig`
+  (`ziggen.go`: a struct of a pointer and a vtable per interface, whose
+  `of` checks at compile time that the implementation has each method,
+  `export` entry points, an arena per call, and the runtime of
+  `zigsupport.go`), the library's root, which imports the implementation
+  as `impl`. Both refuse what only Swift implements (`portable`: views,
+  textures, windows, other modules' interfaces, returned buffers). All
+  carry `mygo:native <version> <hash>`, the hash of the
   package's type, const and error declarations with their comments, which
   `mygo build` compares (`Stale`). The generated Go names its own
   identifiers with a leading underscore (`_x`, `_ctx`, `_err`, `_r`, `_h`,
@@ -5268,8 +5281,12 @@ interfaces Swift implements. Three parts make it work:
   `Contents/Frameworks`, next to the executable, then `.mygo/native` of
   the module of the package's directory, which `runtime.Caller` of the
   generated file finds in builds without `-trimpath`, go test and go run,
-  checked against the Swift sources' times); on Linux the same, for go
-  test (`lib_linux.go`), packaged apps saying `ErrUnsupported`.
+  checked against the sources' times of the module's languages
+  (`lib_ffi.go`); on Linux and Windows the same, Rust and Zig everywhere
+  and Swift on Linux for go test only (`Module.supported`). `mygo_<m>_init`
+  takes, beside the callback, the C runtime's `malloc` and `free` (libc's,
+  ucrtbase's on Windows), with which every implementation allocates the
+  blocks it gives Go and frees Go's, whatever its own allocator.
   Every entry point has one C signature, `(obj, args, len, call) ->
   block`: arguments go in the binary encoding (`codec.go`: integers as 8
   bytes little-endian, floats as float64, lengths before bytes and
@@ -5312,13 +5329,18 @@ interfaces Swift implements. Three parts make it work:
   frameworks its package brings into `Contents/Frameworks`, which
   `codesign --deep` signs, and merges the modules' `Info.plist` and
   `Entitlements.plist` (`mergePlist`) under the app's own keys, which
-  settle the modules' conflicts. `mygo dev`
-  watches `apple/Package.swift`, the plists and `apple/Sources`, but not
-  the generated files. `mygo native call` writes a small typed program
+  settle the modules' conflicts. A module's language for a platform is
+  `moduleLang` (`native_module.go`): Swift on macOS when it has `swift/`,
+  else Rust, then Zig; Rust and Zig modules are libraries like those
+  packages name, as resources (`nativesOf`, `Config.nativePackages` adding
+  each module's library to its package's manifest, with no `build`, as
+  `nativePackage.library` gives the language's per platform). `mygo dev`
+  watches each language's directory and the plists, but not the
+  generated files. `mygo native call` writes a small typed program
   into the module's directory that decodes the arguments into the
   method's parameters, and runs it.
 - **Views.** An interface embedding `native.View` is a view of the
-  platform (an `NSView` in `apple/`), its methods on the main thread; on
+  platform (an `NSView` in `swift/`), its methods on the main thread; on
   platforms without an implementation its constructor returns
   `errors.ErrUnsupported`, and `ui.NativeView` of nil is a plain box.
   `native.View` has one method, `NativeView() uintptr`, the platform's
@@ -5364,9 +5386,10 @@ interfaces Swift implements. Three parts make it work:
   never uploads pixels into one.
 - **Published implementations** (`native_swift.go`, `publishSwift` in
   `native_lib.go`): a module is a native library of its own, named as its
-  Swift module and built with swift from `./apple` (`moduleLibrary`), so
-  `mygo native build` publishes it as Rust and Zig libraries: a universal
-  release build packed as `.tar.gz` with its frameworks, named after its
+  Swift module and built per platform in that platform's language
+  (`moduleTargets`, `moduleLibrary`), so `mygo native build` publishes its
+  Rust and Zig builds as any library's, by `GOOS-GOARCH`, and its Swift as
+  a universal release build packed as `.tar.gz` with its frameworks, named after its
   SHA-256, uploaded with `gh` to the release `native-libraries` of the
   checkout's repository unless `-release` or the library names another
   (`uploadNatives`, which never replaces a file: a name there already is
