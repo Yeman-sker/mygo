@@ -482,6 +482,10 @@ type Image struct {
 	// interface its owner implements, so that renderers link no code of
 	// it.
 	GPU GPUSource
+	// Surface, unless nil, is a frame of video that renderers sample where
+	// a decoder left it, rather than upload Pix (see Surface); Restore
+	// converts it for those that need Pix.
+	Surface *Surface
 }
 
 // GPUSource gives renderers a texture showing an image that something

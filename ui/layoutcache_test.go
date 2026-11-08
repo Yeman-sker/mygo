@@ -459,8 +459,8 @@ func TestLayoutInputs(t *testing.T) {
 		"checked expanded busy current autoComplete orient tip highlighted focusHighlights keepOpen accValue accRange hasRange accFill accStep barInset scrollBase hideScrollbars keepScrollbars barsFrom snap snapAlign " +
 		"listRow rowIndex rowsOf focusGroup groupSelects segment activeDescendant nameFrom nameJoin labelledBy focusTo " +
 		"keyShortcuts accGrid accSet " +
-		"setPos setSize choosesItems search description invalid describedBy errorMessage followX sort level expandable " +
-		"chooseMany serial ignoreInput accessHidden accessDisabled themed lift ringOffset ringColor ringSet clipping zIndex zOrder " +
+		"setPos setSize choosesItems search description invalid readOnly multiline describedBy errorMessage followX sort level expandable " +
+		"chooseMany serial ignoreInput handleDoubleClick accessHidden accessDisabled themed lift ringOffset ringColor ringSet clipping zIndex zOrder " +
 		"roleDescription controls hasPopup popupSet"
 	known := map[string]bool{}
 	for _, f := range strings.Fields(read + " " + other) {

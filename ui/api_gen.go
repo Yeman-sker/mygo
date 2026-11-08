@@ -2988,9 +2988,10 @@ func Toolbar(c *Context, fn func()) Element {
 // keyboard, and at once too within 0.4 seconds of another tip going, as
 // the pointer moves along a toolbar; the theme's TooltipDelay changes
 // both. It goes as the pointer leaves anchor
-// or presses it, and with Escape, until the pointer comes back or the
-// focus does. Over elements inside one another, the innermost one's tip
-// shows; one shows at a time.
+// or presses it, as a menu or popover of anchor opens, and with Escape,
+// until the pointer comes back or the focus does; it does not show while
+// that menu or popover shows. Over elements inside one another, the
+// innermost one's tip shows; one shows at a time.
 //
 // The tip goes above anchor, centered, or below it where there is no room
 // above; fn may place it elsewhere with AttachTo, as after it:
@@ -3125,10 +3126,11 @@ func TreeItem(c *Context, label string, open *bool, children func()) Element {
 //
 // The video moves on only while the view builds it and some of the window
 // shows: one that went out of the view, or a window out of sight, goes on
-// from where it stood. Each frame of the video is a frame of the window,
-// which After asks for as it comes due. While the desktop asks for less
-// motion (Preferences.ReduceMotion), it shows its first frame and does
-// not play.
+// from where it stood; a system's video with sound plays on, unseen, as a
+// browser's does. Each frame of the video is a frame of the window, which
+// After asks for as it comes due. While the desktop asks for less motion
+// (Preferences.ReduceMotion), a decoder's video, and a system's muted one,
+// shows its first frame and does not play.
 func Video(c *Context, p *VideoPlayer) Element {
 	_ctx := c.build()
 	if _ctx == nil {
@@ -6354,6 +6356,20 @@ func (_handle Element) Modal() Element {
 	return wrapElement(_node.Modal())
 }
 
+// Multiline tells assistive technology that an element of the text box
+// role (Role(RoleTextField)) that MyGo does not edit takes several lines,
+// as ARIA's aria-multiline. Text inputs and text areas know it
+// themselves, from the control they are, and other roles ignore it.
+func (_handle Element) Multiline(on bool) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Multiline(on))
+}
+
 // Multiselectable tells assistive technology whether the user chooses
 // several of the items of the element, a list, grid, tree or tree grid
 // of your own, as ARIA's aria-multiselectable: screen readers offer to
@@ -7011,6 +7027,11 @@ func (_handle Element) Range(lo float64, hi float64, value float64) Element {
 // change it: the text can still be selected and copied, from the keyboard
 // too, as it takes the focus, without a caret; assistive technology reads
 // it as read-only.
+//
+// On an element of the text box role (Role(RoleTextField)) that MyGo does
+// not edit, a widget that draws its text and handles its keys itself, it
+// only tells assistive technology that the text box is read-only, as
+// ARIA's aria-readonly. Other roles ignore it.
 func (_handle Element) ReadOnly(on bool) Element {
 	_node := _handle.node()
 	if _node == nil {
@@ -8268,6 +8289,21 @@ func (_handle Element) WidthPercent(p float32) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.WidthPercent(p))
+}
+
+// WindowDoubleClicked reports a double click on a DragWindow handle,
+// which then no longer maximizes the window: the view does what a double
+// click there means to it, as a sidebar starting something new. The
+// handle still moves the window, which DoubleClicked would stop.
+func (_handle Element) WindowDoubleClicked() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	_ctx.rt.applyInputs()
+	return _node.WindowDoubleClicked()
 }
 
 // WindowToLocal maps a window point into the previous frame's border box.

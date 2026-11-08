@@ -49,6 +49,8 @@ var (
 	procDWriteCreate    = dwriteDLL.NewProc("DWriteCreateFactory")
 	kernel32DLL         = syscall.NewLazyDLL(systemDir() + `\kernel32.dll`)
 	procUserLocaleName  = kernel32DLL.NewProc("GetUserDefaultLocaleName")
+	procPreferredLangs  = kernel32DLL.NewProc("GetUserPreferredUILanguages")
+	procRegGetValue     = syscall.NewLazyDLL(systemDir() + `\advapi32.dll`).NewProc("RegGetValueW")
 	procSystemDirectory = syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemDirectoryW")
 	procSystemParams    = syscall.NewLazyDLL(systemDir() + `\user32.dll`).NewProc("SystemParametersInfoW")
 )
@@ -380,6 +382,12 @@ type dwrite struct {
 	factory5 uintptr // IDWriteFactory5, from Windows 10 1703
 	system   uintptr // the system font collection
 	locale   []uint16
+	// han is the locale of Han characters in no language that writes
+	// them, which would otherwise take locale (userHanLanguage); nil when
+	// they keep it. It is read the first time a text has such characters
+	// (userHan), and hanRead says whether it was.
+	han     []uint16
+	hanRead bool
 
 	exists  map[string]bool // whether the system has a family
 	formats map[formatKey]uintptr
@@ -506,6 +514,68 @@ func newDWrite() (*dwrite, error) {
 		e.locale = utf16z("en-US")
 	}
 	return e, nil
+}
+
+// userHan returns the locale of Han characters in no language that writes
+// them (han), reading it the first time: unless the user's locale writes
+// them, the first language that does of the user's display languages, or
+// else of the languages of their profile (#1479).
+func (e *dwrite) userHan() []uint16 {
+	if !e.hanRead {
+		e.hanRead = true
+		if han := resolveUserHanLanguage(syscall.UTF16ToString(e.locale), preferredLanguages, userProfileLanguages); han != "" {
+			e.han = utf16z(han)
+		}
+	}
+	return e.han
+}
+
+// userProfileLanguages returns the languages of the user's profile, in
+// order: those of Settings > Time & language > Language & region, with or
+// without their language pack, as GlobalizationPreferences.Languages and
+// Get-WinUserLanguageList return them. Windows keeps them, from Windows 8,
+// in the value Languages of HKCU\Control Panel\International\User Profile,
+// which this reads: in microseconds, where the Windows Runtime's class
+// takes milliseconds the first time and a COM apartment on the thread,
+// and text is laid out on any. A Windows without the value has none.
+func userProfileLanguages() []string {
+	const (
+		hkeyCurrentUser = 0x80000001
+		rrfRtRegMultiSz = 0x00000020
+		errorMoreData   = 234
+	)
+	key := utf16z(`Control Panel\International\User Profile`)
+	name := utf16z("Languages")
+	size := uint32(256)
+	for range 3 {
+		buf := make([]uint16, (size+1)/2)
+		size = uint32(len(buf) * 2)
+		r, _, _ := procRegGetValue.Call(hkeyCurrentUser, uintptr(unsafe.Pointer(&key[0])), uintptr(unsafe.Pointer(&name[0])), rrfRtRegMultiSz, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
+		switch r {
+		case 0:
+			return splitMultiString(buf[:min(int(size/2), len(buf))])
+		case errorMoreData: // size is now the value's, which may grow again
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+// preferredLanguages returns the user's display languages, in order
+// (GetUserPreferredUILanguages), as the backend reads them: those of the
+// user's languages whose language pack is installed.
+func preferredLanguages() []string {
+	const muiLanguageName = 0x8
+	var count, size uint32
+	if ok, _, _ := procPreferredLangs.Call(muiLanguageName, uintptr(unsafe.Pointer(&count)), 0, uintptr(unsafe.Pointer(&size))); ok == 0 || size == 0 {
+		return nil
+	}
+	buf := make([]uint16, size)
+	if ok, _, _ := procPreferredLangs.Call(muiLanguageName, uintptr(unsafe.Pointer(&count)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); ok == 0 {
+		return nil
+	}
+	return splitMultiString(buf)
 }
 
 // has reports whether a collection has a family.
@@ -1177,6 +1247,18 @@ func (e *dwrite) typeset(layout uintptr, style Style, spans []Span, text []rune)
 		name := e.localeName(run.lang)
 		call(layout, layoutSetLocaleName, uintptr(unsafe.Pointer(&name[0])), textRange(run.start, run.end))
 		runtime.KeepAlive(name)
+	}
+	// Han characters left in the user's locale take the first of the
+	// user's languages that writes them, when the locale does not (#1454),
+	// read the first time a text has some (#1479).
+	if !e.hanRead || e.han != nil {
+		if runs := userHanRuns(text, style.Lang, spans); len(runs) > 0 {
+			if han := e.userHan(); han != nil {
+				for _, run := range runs {
+					call(layout, layoutSetLocaleName, uintptr(unsafe.Pointer(&han[0])), textRange(run.start, run.end))
+				}
+			}
+		}
 	}
 	setObjects(layout, spans, units)
 }

@@ -47,6 +47,12 @@ const (
 	RoleTabList
 	RoleTab
 	RoleSplitter
+	// RoleStatus is a live region of advisory information, as "3 rows
+	// selected" or "Saved": when its text changes, screen readers read the
+	// whole of it out, politely, after what they are reading. Give it a
+	// Key when elements come before it, so that it is the same status from
+	// frame to frame. What a status shows as assistive technology comes,
+	// or as it first shows, is not read.
 	RoleStatus
 	RoleTable
 	RoleRow
@@ -997,9 +1003,19 @@ func (rt *engine) accessDetails(e *node, n *platform.AccessNode) {
 			n.SelStart, n.SelEnd = ed.selection()
 		}
 	}
+	// A text box of your own, with no editor of MyGo's, says what it is
+	// (Role, ReadOnly, Multiline).
+	if n.Role == platform.RoleTextField && (e.st.editor == nil || e.flags&flagEditable == 0) {
+		if e.readOnly {
+			n.States |= platform.AccessReadOnly
+		}
+		if e.multiline {
+			n.States |= platform.AccessMultiline
+		}
+	}
 	// Custom text clients without an editor take set-value here; inputs and
 	// text areas with an editor follow the editor branch above.
-	if e.textClient != nil && (e.st == nil || e.st.editor == nil || e.flags&flagEditable == 0) {
+	if e.textClient != nil && (e.st == nil || e.st.editor == nil || e.flags&flagEditable == 0) && n.States&platform.AccessReadOnly == 0 {
 		n.Actions |= platform.ActionSetValue
 	}
 	if e.accFill != nil {

@@ -722,6 +722,9 @@ type state struct {
 	// accessDisabled, that assistive technology reads it as unavailable
 	// (AccessDisabled).
 	ignoreInput, accessHidden, accessDisabled bool
+	// handleDoubleClick tells that the element, a DragWindow handle,
+	// takes its double click (WindowDoubleClicked).
+	handleDoubleClick bool
 	// activeDescendant is the element that has the keyboard focus while
 	// this one does (ActiveDescendant), 0 for none.
 	activeDescendant uint64
@@ -731,6 +734,10 @@ type state struct {
 	// of another going: its theme's TooltipDelay.
 	tip               bool
 	tipDelay, tipWarm time.Duration
+	// popped is the last frame a popup attached to the element showed in
+	// (popupShows): a menu, a popover or a select's options, while which
+	// its tip does not show.
+	popped uint64
 	// effectLayer is what the element and its children render into for
 	// its Effect, its blur, its Cache or its opacity as a group
 	// (paintGroup), kept from frame to frame. grouped tells that, faded
