@@ -131,7 +131,7 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 				return fmt.Errorf("native module %s:\n%w", rel, err)
 			}
 			if len(stale) > 0 {
-				return fmt.Errorf("the generated files of native module %s are older than its interfaces (%s): run mygo generate and commit them", rel, relPathTo(c.root, stale[0]))
+				return fmt.Errorf("the generated files of native module %s are older than its interfaces (%s): regenerate them with mygo dev, or mygo native check %s, and commit them", rel, relPathTo(c.root, stale[0]), rel)
 			}
 		}
 		// Linux runs a module's Swift under go test and go run only, when

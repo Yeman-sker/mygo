@@ -15,14 +15,14 @@ import (
 )
 
 // analyzer makes the module's implementation, skipping where it is not
-// built: run `mygo generate` in examples/native-module first, on macOS.
+// built: run `mygo dev` in examples/native-module first, on macOS.
 func analyzer(t *testing.T) language.Analyzer {
 	t.Helper()
 	a, err := language.NewAnalyzer()
 	if errors.Is(err, errors.ErrUnsupported) {
 		t.Skip("no implementation on this platform")
 	}
-	if err != nil && strings.Contains(err.Error(), "mygo generate") {
+	if err != nil && strings.Contains(err.Error(), "mygo native build") {
 		t.Skip(err)
 	}
 	if err != nil {

@@ -25,7 +25,7 @@ func echo(t testing.TB) roundtrip.Echo {
 	if errors.Is(err, errors.ErrUnsupported) {
 		t.Skip("no implementation on this platform")
 	}
-	if err != nil && strings.Contains(err.Error(), "mygo generate") {
+	if err != nil && strings.Contains(err.Error(), "mygo native build") {
 		t.Skip(err)
 	}
 	if err != nil {

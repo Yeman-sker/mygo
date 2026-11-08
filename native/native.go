@@ -1,12 +1,12 @@
 // Package native runs native modules: Go interfaces implemented in Swift,
 // Rust or Zig (see docs/native-modules.md).
 //
-// Native modules are experimental: this package, the code mygo generate
-// writes and the mygo native commands may change in breaking ways in any
+// Native modules are experimental: this package, the code MyGo generates
+// and the mygo native commands may change in breaking ways in any
 // release.
 //
-// A module's package declares its interfaces, and `mygo generate` writes
-// the rest: the constructors and the values that call the implementation,
+// A module's package declares its interfaces, and MyGo generates the
+// rest (`mygo dev` keeps it up to date): the constructors and the values that call the implementation,
 // which use this package. An app calls a module's constructor, NewT, and
 // never this package directly, except for its types: errors made with
 // NewError, Buffer and View.
@@ -90,7 +90,7 @@ type Module struct {
 	// Symbol prefixes the functions the implementation exports: language.
 	Symbol string
 	// Dir is the directory of the package, when the binary knows it
-	// (built without -trimpath), where `mygo generate` builds the
+	// (built without -trimpath), where mygo dev builds the
 	// implementation for go test and go run.
 	Dir string
 	// Langs are the languages the module is implemented in: swift,

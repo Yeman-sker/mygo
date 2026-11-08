@@ -4,7 +4,7 @@
 change in any release, including in breaking ways: the Go side, the
 generated Swift, Rust and Zig, the `mygo native` commands and
 `mygo-plugin.json`. Release notes list each breaking change and what to
-do about it, such as regenerating with `mygo generate`.
+do about it.
 
 A native module is a Go interface implemented in Swift, Rust or Zig. You
 declare the interface in Go, implement what MyGo generates from it, and
@@ -113,7 +113,8 @@ for tok, err := range a.Tokens(ctx, text, language.Sentence) {
 }
 ```
 
-The interface is the only declaration. `mygo generate` writes the rest:
+The interface is the only declaration. MyGo generates the rest, and
+`mygo dev` keeps it up to date as you edit:
 `NewAnalyzer` in Go, and for each language the declarations its
 implementation must satisfy, here the Swift protocol `Analyzer`, the struct
 `Token`, the enums `Unit` and `LanguageError`, with the glue between them;
@@ -227,7 +228,7 @@ where it appears: an interface that a method of the module returns, such
 as a loaded model, is implemented by the platform (see
 [objects](#objects)); one that methods only take, such as a delegate, is
 implemented by Go (see [interfaces Go implements](#interfaces-go-implements)).
-`mygo generate` stops with an error at an interface that is both.
+MyGo stops with an error at an interface that is both.
 
 **Capabilities.** What an implementation is, beyond its methods, is said in
 Go's own way, by embedding:
@@ -337,7 +338,7 @@ left out. Structs and slices are copied across, so neither side sees the
 other's later changes. A `[]byte` argument is lent to Swift for the call
 without a copy: copy it, with `Data(data)`, to keep it.
 
-`mygo generate` stops with an error, at the line of the declaration, for
+MyGo stops with an error, at the line of the declaration, for
 anything else: channels, `any`, maps with other keys, generic types and
 types of other packages, except those above. Give such a value a struct of
 the package.
@@ -819,7 +820,7 @@ with their Swift modules and libraries, which it links: the app gets each
 module once, however many modules use it, next to the others in
 `Contents/Frameworks`.
 
-`mygo generate` and `mygo dev` also write the app's modules as the targets
+`mygo dev` also writes the app's modules as the targets
 of one Swift package, `.mygo/native`, each depending on the modules its
 Go package imports and on the packages its own `Package.swift` declares,
 its sources a link to the module's. Open that package in Xcode, or point
@@ -999,7 +1000,7 @@ files in `.mygo/native` of the Go module, not in the module's directories:
 keep `.mygo/` in your `.gitignore`, as the projects `mygo init` makes do.
 
 `go test` and `go run` run the implementation of the platform they run on
-once `mygo generate`, or `mygo native build -target host`, has built it;
+once `mygo dev`, or `mygo native build -target host`, has built it;
 they say to run it when the build is missing or older than the sources.
 `-lang` builds another of the module's languages instead, to test each:
 

@@ -57,7 +57,7 @@ then Zig.
    prints the result as JSON, a line per value of a stream, and the calls
    of callbacks.
 5. Test from Go: `go test` in the module runs the implementation once
-   `mygo native check` or `mygo generate` built it;
+   `mygo dev` or `mygo native check` built it;
    `mygo native build -target host -lang <language> [dir]` builds another
    of its languages to test that one. Test code that takes the interface
    with a fake of it.

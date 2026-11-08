@@ -146,8 +146,8 @@ func (m *Module) open() (*library, error) {
 // LibraryName is the file of a module's implementation on this system.
 func LibraryName(module string) string { return nativelib.FileName(module, runtime.GOOS) }
 
-// checkFresh refuses a build of the implementation that `mygo generate`
-// made for go test and go run, in the module's .mygo/native, once the
+// checkFresh refuses a build of the implementation that mygo dev or
+// mygo native build -target host made for go test and go run, in the module's .mygo/native, once the
 // Swift sources are newer: the build would not be what they say.
 func (m *Module) checkFresh(l *ffi.Library) error {
 	if m.Dir == "" || mygo.App.IsPackaged() {
@@ -155,7 +155,7 @@ func (m *Module) checkFresh(l *ffi.Library) error {
 	}
 	path, err := l.Path()
 	if err != nil {
-		return fmt.Errorf("native: the implementation of %s is not built: run `mygo generate` in %s (%w)", m.Name, m.Dir, err)
+		return fmt.Errorf("native: the implementation of %s is not built: run mygo dev, or mygo native build -target host %s (%w)", m.Name, m.Dir, err)
 	}
 	if !strings.Contains(filepath.ToSlash(path), "/.mygo/native/") {
 		return nil
@@ -171,7 +171,7 @@ func (m *Module) checkFresh(l *ffi.Library) error {
 		}
 	}
 	if newer.After(st.ModTime()) {
-		return fmt.Errorf("native: the implementation of %s is older than its sources: run `mygo generate` in %s", m.Name, m.Dir)
+		return fmt.Errorf("native: the implementation of %s is older than its sources: run mygo dev, or mygo native build -target host %s", m.Name, m.Dir)
 	}
 	return nil
 }
@@ -207,7 +207,7 @@ func (l *library) sym(m *Module, name string) (uintptr, error) {
 	full := "mygo_" + m.Symbol + "_" + name
 	p, err := l.lib.Symbol(full)
 	if err != nil {
-		return 0, fmt.Errorf("native: %s has no %s: regenerate it with mygo generate", LibraryName(m.Name), full)
+		return 0, fmt.Errorf("native: %s has no %s: rebuild it: run mygo dev, or mygo native build -target host %s", LibraryName(m.Name), full, m.Dir)
 	}
 	l.syms.Store(name, p)
 	return p, nil

@@ -21,7 +21,7 @@ import (
 var _module = &_native.Module{Name: "Language", Symbol: "language", Langs: []string{"swift"}, MinMacOS: "13", Dir: _dir(), Errors: []*_native.Error{ErrUndetermined, ErrNoEmbedding}, Deps: []string{}}
 
 // _dir returns the package's directory when the binary knows it, where
-// mygo generate builds the implementation for go test and go run.
+// mygo dev builds the implementation for go test and go run.
 func _dir() string {
 	_, file, _, ok := _runtime.Caller(0)
 	if !ok || !_filepath.IsAbs(file) {

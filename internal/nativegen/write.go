@@ -356,8 +356,8 @@ const agentsTemplate = "# Native module PKG\n\n" +
 	"  which gets a constructor, `NewT`.\n" +
 	"- `PKG_native.go` and each language's generated file\n" +
 	"  (`swift/Sources/MODULE/MODULE.mygo.swift`, `rust/src/mygo.rs`,\n" +
-	"  `zig/src/mygo.zig`) are generated: never edit them; run `mygo generate`\n" +
-	"  after changing the interfaces.\n" +
+	"  `zig/src/mygo.zig`) are generated: never edit them; `mygo dev`\n" +
+	"  regenerates them when the interfaces change.\n" +
 	"- `swift/` is a Swift package, which macOS uses when it is there, for\n" +
 	"  Apple's frameworks: a factory `makeT()` per entry point and classes\n" +
 	"  conforming to the generated protocols. Add Swift packages and frameworks\n" +

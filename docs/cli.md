@@ -291,8 +291,8 @@ prints the result as JSON, a line per value of a stream. It makes the
 method's context, which `-timeout` limits, and prints the calls of
 callbacks.
 
-`mygo generate` generates every native module of the app, and `mygo dev`
-and `mygo build` build them; see
+`mygo dev` and `mygo build` generate and build every native module of the
+app; see
 [build, run and test](native-modules.md#build-run-and-test).
 
 ## mygo keygen
