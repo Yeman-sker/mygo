@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin || linux || windows
 
 package native
 
@@ -44,25 +44,17 @@ var libc struct {
 
 func loadLibc() error {
 	libc.once.Do(func() {
-		h, err := purego.Dlopen(libcPath, purego.RTLD_NOW|purego.RTLD_GLOBAL)
-		if err != nil {
-			libc.err = err
+		if libc.malloc, libc.free, libc.isMain, libc.err = openLibc(); libc.err != nil {
 			return
-		}
-		for name, p := range map[string]*uintptr{"malloc": &libc.malloc, "free": &libc.free, isMainSymbol: &libc.isMain} {
-			if *p, err = purego.Dlsym(h, name); err != nil {
-				libc.err = err
-				return
-			}
 		}
 		// One callback for every module, created once: purego's
 		// callbacks are never freed.
-		libc.callback = purego.NewCallback(func(kind, id uint64, status int64, data, n uintptr) uintptr {
+		libc.callback = purego.NewCallback(func(kind, id, status, data, n uintptr) uintptr {
 			var in []byte
 			if n > 0 {
 				in = append([]byte(nil), unsafe.Slice(bytesAt(data), n)...)
 			}
-			st, out, ok := handle(kind, id, status, in)
+			st, out, ok := handle(uint64(kind), uint64(id), int64(status), in)
 			if !ok {
 				return 0
 			}
@@ -113,7 +105,7 @@ func (m *Module) load() (*library, error) {
 }
 
 func (m *Module) open() (*library, error) {
-	if m.MinMacOS != "" && olderMacOS(m.MinMacOS) || packagedUnsupported && mygo.App.IsPackaged() {
+	if !m.supported() || m.MinMacOS != "" && olderMacOS(m.MinMacOS) {
 		return nil, errors.ErrUnsupported
 	}
 	if err := loadLibc(); err != nil {
@@ -145,12 +137,14 @@ func (m *Module) open() (*library, error) {
 	// The module's index makes its continuations' ids unique.
 	idx := lastModule.Add(1)
 	modules.Store(idx, m)
-	purego.SyscallN(init, libc.callback, uintptr(idx<<contBits))
+	// The implementation allocates the blocks it gives Go, and frees those
+	// Go gives it, with the C library's malloc and free, as Go does.
+	purego.SyscallN(init, libc.callback, uintptr(idx<<contBits), libc.malloc, libc.free)
 	return lib, nil
 }
 
-// LibraryName is the file of a module's implementation on macOS.
-func LibraryName(module string) string { return nativelib.FileName(module, "darwin") }
+// LibraryName is the file of a module's implementation on this system.
+func LibraryName(module string) string { return nativelib.FileName(module, runtime.GOOS) }
 
 // checkFresh refuses a build of the implementation that `mygo generate`
 // made for go test and go run, in the module's .mygo/native, once the
@@ -170,13 +164,20 @@ func (m *Module) checkFresh(l *ffi.Library) error {
 	if err != nil {
 		return err
 	}
-	if newer := newestSource(filepath.Join(m.Dir, "apple")); newer.After(st.ModTime()) {
+	var newer time.Time
+	for _, lang := range m.Langs {
+		if t := newestSource(filepath.Join(m.Dir, lang)); t.After(newer) {
+			newer = t
+		}
+	}
+	if newer.After(st.ModTime()) {
 		return fmt.Errorf("native: the implementation of %s is older than its sources: run `mygo generate` in %s", m.Name, m.Dir)
 	}
 	return nil
 }
 
-// newestSource returns when a source of a Swift package last changed.
+// newestSource returns when a source of the implementation in dir last
+// changed: its Swift, Rust or Zig, or what builds it.
 func newestSource(dir string) time.Time {
 	var t time.Time
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -184,12 +185,12 @@ func newestSource(dir string) time.Time {
 			return nil
 		}
 		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") && path != dir {
+			if (strings.HasPrefix(d.Name(), ".") || d.Name() == "target" || d.Name() == "zig-out") && path != dir {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, ".swift") {
+		if ext := filepath.Ext(path); ext == ".swift" || ext == ".rs" || ext == ".zig" || ext == ".toml" || ext == ".zon" {
 			if info, err := d.Info(); err == nil && info.ModTime().After(t) {
 				t = info.ModTime()
 			}

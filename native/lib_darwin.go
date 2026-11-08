@@ -13,8 +13,6 @@ const (
 	isMainSymbol = "pthread_main_np"
 )
 
-const packagedUnsupported = false
-
 func mainThread() bool {
 	r, _, _ := purego.SyscallN(libc.isMain)
 	return r != 0

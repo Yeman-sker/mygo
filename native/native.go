@@ -1,5 +1,5 @@
-// Package native runs native modules: Go interfaces implemented in a
-// platform's own language, Swift on macOS (see docs/native-modules.md).
+// Package native runs native modules: Go interfaces implemented in Swift,
+// Rust or Zig (see docs/native-modules.md).
 //
 // A module's package declares its interfaces, and `mygo generate` writes
 // the rest: the constructors and the values that call the implementation,
@@ -89,6 +89,9 @@ type Module struct {
 	// (built without -trimpath), where `mygo generate` builds the
 	// implementation for go test and go run.
 	Dir string
+	// Langs are the languages the module is implemented in: swift,
+	// rust, zig.
+	Langs []string
 	// MinMacOS is the oldest macOS the implementation runs on, from the
 	// platforms of its Package.swift.
 	MinMacOS string
@@ -101,6 +104,23 @@ type Module struct {
 	once sync.Once
 	lib  *library
 	err  error
+}
+
+// supported reports whether an implementation of the module runs here:
+// Rust and Zig everywhere package ffi loads libraries, Swift on macOS, and
+// on Linux under go test and go run.
+func (m *Module) supported() bool {
+	for _, l := range m.Langs {
+		switch l {
+		case "rust", "zig":
+			return true
+		case "swift":
+			if runtime.GOOS == "darwin" || runtime.GOOS == "linux" && !mygo.App.IsPackaged() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Wrapper makes the value of an interface of the platform's around an

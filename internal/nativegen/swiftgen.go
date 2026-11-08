@@ -47,7 +47,7 @@ func GenerateSwift(m *Module) []byte {
 	}
 	g.errorsDecl()
 	g.p("\n// MARK: - What Go calls\n")
-	g.p("\n@_cdecl(%q)\npublic func _mygo_init(_ cb: _MygoCallback, _ idBase: UInt64) {\n    _mygoCallback = cb\n    _mygoIDBase = idBase\n}\n", g.sym("init"))
+	g.p("\n@_cdecl(%q)\npublic func _mygo_init(_ cb: _MygoCallback, _ idBase: UInt64, _ malloc: UnsafeRawPointer?, _ free: UnsafeRawPointer?) {\n    _mygoCallback = cb\n    _mygoIDBase = idBase\n}\n", g.sym("init"))
 	for _, it := range m.Interfaces {
 		if it.ByGo {
 			g.goProxy(it)

@@ -1,11 +1,11 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package native
 
 import "errors"
 
-// library is the loaded implementation of a module, which only macOS has
-// for now.
+// library is the loaded implementation of a module, which this system
+// cannot load.
 type library struct{}
 
 func (m *Module) load() (*library, error) { return nil, errors.ErrUnsupported }
@@ -27,8 +27,8 @@ func (l *library) cancel(m *Module, call uint64)                            {}
 func (l *library) next(m *Module, call uint64)                              {}
 func (l *library) resume(m *Module, cont uint64, status int64, data []byte) {}
 
-// LibraryName is the file of a module's implementation on macOS.
-func LibraryName(module string) string { return "lib" + module + ".dylib" }
+// LibraryName is the file of a module's implementation on Linux.
+func LibraryName(module string) string { return "lib" + module + ".so" }
 
 func allocate(n int) uintptr { return 0 }
 func deallocate(p uintptr)   {}
