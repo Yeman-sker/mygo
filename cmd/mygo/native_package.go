@@ -28,14 +28,14 @@ func writeNativePackage(c *Config, dirs []string) error {
 	}
 	var targets []target
 	for _, dir := range dirs {
-		if !nativegen.HasPlatform(dir, "apple") {
+		if !nativegen.HasLang(dir, "swift") {
 			continue
 		}
 		m, err := nativegen.Load(dir)
 		if err != nil {
 			return err
 		}
-		man, err := dumpPackage(filepath.Join(dir, "apple"))
+		man, err := dumpPackage(filepath.Join(dir, "swift"))
 		if err != nil {
 			return err
 		}

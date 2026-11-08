@@ -23,9 +23,11 @@ import (
 	"github.com/egoist/mygo/internal/nativelib"
 )
 
-// Native modules (docs/native-modules.md): Go packages whose interfaces a
-// platform's own language implements. The CLI generates them, builds their
-// implementations with the platform's tools and puts them into the app.
+// Native modules (docs/native-modules.md): Go packages whose interfaces
+// Swift, Rust or Zig implement. The CLI generates them, builds their
+// implementations and puts them into the app: Swift ones here, into the
+// Frameworks of macOS apps, and the others as the libraries packages name
+// (natives).
 
 // nativeApp is what the app's native modules add to its bundle.
 type nativeApp struct {
@@ -75,7 +77,7 @@ const (
 
 // prepareNative generates the app's native modules (for development) or
 // checks that their generated files are up to date (for release), and on
-// macOS builds the implementations for goos/goarch into c.native.
+// macOS builds their Swift implementations for goos/goarch into c.native.
 func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) {
 	c.native = nil
 	dirs, err := appNativeModules(c, goos, goarch)
@@ -113,7 +115,6 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 			appKeys["Entitlements.plist"][k] = true
 		}
 	}
-	handled := map[string]bool{} // the modules' libraries, by package and name
 	for _, dir := range dirs {
 		rel := relPathTo(c.root, dir)
 		if mode == nativeDev {
@@ -133,9 +134,12 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 				return fmt.Errorf("the generated files of native module %s are older than its interfaces (%s): run mygo generate and commit them", rel, relPathTo(c.root, stale[0]))
 			}
 		}
-		// Linux runs a module's Swift under go test and go run only.
-		devLinux := mode == nativeDev && goos == "linux" && runtime.GOOS == "linux" && goarch == runtime.GOARCH
-		if goos != "darwin" && !devLinux || !nativegen.HasPlatform(dir, "apple") {
+		// Linux runs a module's Swift under go test and go run only, when
+		// no other language implements it.
+		lang := moduleLang(dir, goos, "")
+		devLinux := mode == nativeDev && goos == "linux" && runtime.GOOS == "linux" && goarch == runtime.GOARCH &&
+			lang == "" && nativegen.HasLang(dir, "swift")
+		if goos != "darwin" && !devLinux || goos == "darwin" && lang != "swift" {
 			continue
 		}
 		if devLinux {
@@ -154,12 +158,11 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 			return err
 		}
 		app.builds = append(app.builds, b)
-		handled[dir+"\x00"+b.name] = true
 		for _, kind := range []struct {
 			file string
 			dst  *map[string]any
 		}{{"Info.plist", &app.info}, {"Entitlements.plist", &app.entitlements}} {
-			path := filepath.Join(dir, "apple", kind.file)
+			path := filepath.Join(dir, "swift", kind.file)
 			data, err := os.ReadFile(path)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -186,7 +189,7 @@ func prepareNative(c *Config, goos, goarch string, mode nativeMode) (err error) 
 		}
 		for _, p := range pkgs {
 			for _, l := range p.manifest.Libraries {
-				if !l.Build.IsSwift() || handled[p.dir+"\x00"+l.Name] {
+				if !l.Build.IsSwift() {
 					continue
 				}
 				b, err := swiftBuild(c, p.dir, l, nil, goarch, mode, p.local)
@@ -216,7 +219,7 @@ func moduleBuild(c *Config, dir, goarch string, mode nativeMode) (nativeBuild, e
 	if err != nil {
 		return nativeBuild{}, err
 	}
-	lib, err := moduleLibrary(m)
+	lib, err := moduleLibrary(m, "swift")
 	if err != nil {
 		return nativeBuild{}, err
 	}
@@ -329,7 +332,7 @@ func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 	if err != nil {
 		return nativeBuild{}, err
 	}
-	hash, err := nativelib.SourceHash(filepath.Join(dir, "apple"), &nativelib.Build{Swift: "./apple"})
+	hash, err := nativelib.SourceHash(filepath.Join(dir, "swift"), &nativelib.Build{Swift: "./swift"})
 	if err != nil {
 		return nativeBuild{}, err
 	}
@@ -353,7 +356,7 @@ func buildSwiftModule(dir, goarch string, release bool) (nativeBuild, error) {
 		depFlags = append(depFlags, "-Xswiftc", "-I", "-Xswiftc", filepath.Join(bin, "Modules"), "-Xswiftc", "-I", "-Xswiftc", bin, "-Xlinker", "-L", "-Xlinker", bin, "-Xlinker", "-l"+dep.Name)
 		key += " " + d.key // it changes with them
 	}
-	return buildSwiftProduct(dir, filepath.Join(dir, "apple"), m.Name, "native module "+m.Package, depFlags, key, goarch, release)
+	return buildSwiftProduct(dir, filepath.Join(dir, "swift"), m.Name, "native module "+m.Package, depFlags, key, goarch, release)
 }
 
 // buildSwiftLibrary builds the Swift library lib that the package in dir
@@ -585,16 +588,17 @@ func plistEqual(a, b any) bool {
 func runNative(args []string) error {
 	const usage = `Usage: mygo native <command> [arguments]
 
-Native libraries, built from Swift, Rust or Zig sources and bound from Go
-(docs/native-libraries.md), and native modules: Go interfaces implemented
-in a platform's own language (docs/native-modules.md).
+Native modules: Go packages whose interfaces are implemented in Swift, Rust
+or Zig, built into a library per platform and published with the package
+(docs/native-modules.md). Packages that bind a C library with ffi name it
+the same way.
 
-	build [flags] [dir]                         build the native libraries of the packages in dir, ready to publish
-	new [-platform <platforms>] <module name>   make a module in modules/<name>, or at a path
-	add <platform> [module dir]                 implement a module in another platform's directory
-	check [module dir]                          generate, build and vet a module, listing problems
+	build [flags] [dir]                     build the native modules and libraries of the packages in dir, ready to publish
+	new [-lang <languages>] <module name>   make a module in modules/<name>, or at a path
+	add <language> [module dir]             implement a module in another language: swift, rust or zig
+	check [module dir]                      generate, build and vet a module, listing problems
 	call [-timeout <d>] [module dir] <Interface>.<Method> [<arguments>]
-	                                            call a method and print its result as JSON
+	                                        call a method and print its result as JSON
 `
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
@@ -620,10 +624,13 @@ in a platform's own language (docs/native-modules.md).
 }
 
 func runNativeNew(args []string) error {
-	fs := newFlags("native new", "[-platform <platforms>] <module name>", `Makes a native module named <module name> in modules/<module name>, or at the
+	fs := newFlags("native new", "[-lang <languages>] <module name>", `Makes a native module named <module name> in modules/<module name>, or at the
 path given instead of a name: the Go package declaring its interface, its
-generated Go, an AGENTS.md, and a directory per platform.`)
-	platforms := fs.String("platform", "apple", "the platforms to implement it in, separated by commas: apple, or none for the Go side alone")
+generated Go, an AGENTS.md, and a directory per language implementing it.
+Swift serves macOS, where it reaches Apple's frameworks; Rust and Zig serve
+every platform. A module in several languages is built in Swift on macOS,
+and in Rust, or else Zig, elsewhere.`)
+	langs := fs.String("lang", "swift", "the languages to implement it in, separated by commas: swift, rust, zig, or none for the Go side alone")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -637,11 +644,11 @@ generated Go, an AGENTS.md, and a directory per platform.`)
 		dir = filepath.Join("modules", arg)
 	}
 	var list []string
-	if *platforms != "none" {
-		list = splitList(*platforms)
-		for _, p := range list {
-			if !slices.Contains(nativegen.Platforms, p) {
-				return fmt.Errorf("unknown platform %q: modules are implemented in %s, or none", p, strings.Join(nativegen.Platforms, ", "))
+	if *langs != "none" {
+		list = splitList(*langs)
+		for _, l := range list {
+			if !slices.Contains(nativegen.Langs, l) {
+				return fmt.Errorf("unknown language %q: modules are implemented in %s, or none", l, strings.Join(nativegen.Langs, ", "))
 			}
 		}
 	}
@@ -653,7 +660,7 @@ generated Go, an AGENTS.md, and a directory per platform.`)
 }
 
 func runNativeAdd(args []string) error {
-	fs := newFlags("native add", "<platform> [module dir]", "Implements an existing module in another platform's directory, with methods\nthat say they are unsupported, so that the module builds at once.")
+	fs := newFlags("native add", "<language> [module dir]", "Implements an existing module in another language (swift, rust or zig), with\nmethods that say they are unsupported, so that the module builds at once.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -662,7 +669,7 @@ func runNativeAdd(args []string) error {
 		return flagErrHelp()
 	}
 	dir := dirArg(fs.Args()[1:])
-	if err := nativegen.AddPlatform(dir, fs.Arg(0)); err != nil {
+	if err := nativegen.AddLang(dir, fs.Arg(0)); err != nil {
 		return err
 	}
 	logf("Added %s to %s", fs.Arg(0), cyan(dir))
@@ -672,7 +679,8 @@ func runNativeAdd(args []string) error {
 // runNativeCheck generates, builds and vets a module, and lists its
 // problems as file:line: message.
 func runNativeCheck(args []string) error {
-	fs := newFlags("native check", "[module dir]", "Generates the module, builds the implementation of the platform it runs on and\nvets the Go package, then lists every problem as file:line: message. It exits\nwith status 1 when there are problems.")
+	fs := newFlags("native check", "[-lang <language>] [module dir]", "Generates the module, builds its implementation for this machine and vets the\nGo package, then lists every problem as file:line: message. It exits with\nstatus 1 when there are problems.")
+	lang := fs.String("lang", "", "build the implementation in this language (default: the one this machine uses)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -691,8 +699,8 @@ func runNativeCheck(args []string) error {
 	case err != nil:
 		return err
 	}
-	if err == nil && runtime.GOOS == "darwin" && nativegen.HasPlatform(dir, "apple") {
-		if _, err := buildSwiftModule(dir, runtime.GOARCH, false); err != nil {
+	if err == nil {
+		if err := buildModuleHere(dir, *lang); err != nil {
 			problems = append(problems, strings.TrimSpace(err.Error()))
 		}
 	}
@@ -718,6 +726,36 @@ func runNativeCheck(args []string) error {
 	return nil
 }
 
+// buildModuleHere builds the implementation of the module in dir for this
+// machine, in lang or the one it uses here (moduleLang), where go run and
+// go test find it. Swift builds on Linux only when lang asks for it, as
+// modules of Apple's frameworks do not; a module with no implementation
+// for this machine builds nothing.
+func buildModuleHere(dir, lang string) error {
+	switch l := moduleLang(dir, runtime.GOOS, lang); {
+	case l == "" && lang != "":
+		return fmt.Errorf("%s is not implemented in %s for %s", dir, lang, runtime.GOOS)
+	case l == "swift":
+		if runtime.GOOS != "darwin" && lang != "swift" {
+			return nil
+		}
+		_, err := buildSwiftModule(dir, runtime.GOARCH, false)
+		return err
+	case l != "":
+		m, err := nativegen.Load(dir)
+		if err != nil {
+			return err
+		}
+		lib, err := moduleLibrary(m, l)
+		if err != nil {
+			return err
+		}
+		_, err = buildNative(dir, lib, runtime.GOOS, runtime.GOARCH, "")
+		return err
+	}
+	return nil
+}
+
 // errSilent makes main exit with status 1 without printing more.
 var errSilent = flag.ErrHelp
 
@@ -726,7 +764,23 @@ func flagErrHelp() error { return errSilent }
 // generateNative generates the app's native modules and builds their
 // implementations where go test and go run find them.
 func generateNative(c *Config) error {
-	return prepareNative(c, runtime.GOOS, runtime.GOARCH, nativeDev)
+	if err := prepareNative(c, runtime.GOOS, runtime.GOARCH, nativeDev); err != nil {
+		return err
+	}
+	// The libraries of the modules Rust or Zig implement here, built or
+	// downloaded, where their packages load them from.
+	pkgs, err := c.nativePackages(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	pkgs = slices.DeleteFunc(pkgs, func(p nativePackage) bool { return p.module == nil })
+	for i := range pkgs {
+		m := pkgs[i].module
+		l, _ := pkgs[i].manifest.Lookup(m.Name)
+		pkgs[i].manifest.Libraries = []nativelib.Library{l}
+	}
+	_, err = c.nativesOf(pkgs, runtime.GOOS, runtime.GOARCH)
+	return err
 }
 
 // hashNative writes what the app's native modules put into it, so that

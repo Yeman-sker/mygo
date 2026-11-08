@@ -77,7 +77,7 @@ argument is its size, and its contents print after the result.`)
 	if me == nil {
 		return fmt.Errorf("%s has no method %s", iface, method)
 	}
-	if runtime.GOOS == "darwin" && nativegen.HasPlatform(dir, "apple") {
+	if runtime.GOOS == "darwin" && nativegen.HasLang(dir, "swift") {
 		if _, err := buildSwiftModule(dir, runtime.GOARCH, false); err != nil {
 			return err
 		}

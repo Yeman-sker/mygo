@@ -61,6 +61,7 @@ func runNativeBuild(args []string) error {
 	out := flags.String("out", "", "the directory of the files to publish (default: .mygo/native/release in the module)")
 	upload := flags.Bool("upload", false, "upload the files to the GitHub release of -release with the GitHub CLI")
 	force := flags.Bool("force", false, "build the platforms whose published files were built from these sources too")
+	lang := flags.String("lang", "", "build native modules in this language (swift, rust or zig) where they are\nimplemented in it, rather than in each platform's: to test each with -target host")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -86,7 +87,7 @@ func runNativeBuild(args []string) error {
 	var libs []*nativelib.Library
 	for _, p := range pkgs {
 		for i := range p.manifest.Libraries {
-			if l := &p.manifest.Libraries[i]; l.Build != nil {
+			if l := &p.manifest.Libraries[i]; l.Build != nil || p.isModule(*l) {
 				if *upload && *release == "" && l.Release == "" {
 					// The repository's one release of native libraries.
 					repo, err := gitHubRepo(p.dir)
@@ -100,7 +101,7 @@ func runNativeBuild(args []string) error {
 		}
 	}
 	if len(libs) == 0 {
-		return fmt.Errorf("no %s in %s names a library to build (\"build\": {\"cargo\": \"./<dir>\"}, {\"zig\": \"./<dir>\"} or {\"swift\": \"./<dir>\"}), nor is a native module", pluginFile, dir)
+		return fmt.Errorf("%s is no native module, nor does a %s in it name a library to build (\"build\": {\"cargo\": \"./<dir>\"}, {\"zig\": \"./<dir>\"} or {\"swift\": \"./<dir>\"})", dir, pluginFile)
 	}
 	if !host {
 		warnNativeRelease(pkgs, targets)
@@ -112,80 +113,120 @@ func runNativeBuild(args []string) error {
 	var assets, failed []string
 	uploads := map[string][]string{} // the files of each release
 	changed := map[string]bool{}     // the packages whose manifest to write
-	for _, p := range pkgs {
-		for i := range p.manifest.Libraries {
-			l := &p.manifest.Libraries[i]
-			if l.Build == nil {
+	// publish builds library l of package p for targets, and publishes it
+	// under release r; it returns an error with host only, and otherwise
+	// lists what did not build in failed.
+	publish := func(p nativePackage, l *nativelib.Library, targets []string, r string) error {
+		if l.Build.IsSwift() {
+			a, err := publishSwift(p, l, targets, host, *force, *out, r)
+			switch {
+			case err != nil && host:
+				return err
+			case err != nil:
+				failed = append(failed, fmt.Sprintf("%s: %v", l.Name, err))
+			case a != "":
+				assets = append(assets, a)
+				if r != "" {
+					uploads[r] = append(uploads[r], a)
+				}
+				l.Release = r
+				changed[p.dir] = true
+			}
+			return nil
+		}
+		_, d := l.Build.Tool()
+		src := filepath.Join(p.dir, filepath.FromSlash(d))
+		before, err := nativelib.SourceHash(src, l.Build)
+		if err != nil {
+			return err
+		}
+		built := map[string]bool{} // the platforms this run publishes
+		for _, t := range targets {
+			goos, goarch, _ := strings.Cut(t, "-")
+			if f, ok := l.Files[t]; ok && !host && !*force && f.SourceHash == before {
+				logf("%s for %s is published from these sources", l.Name, t)
 				continue
 			}
-			r := cmp.Or(*release, l.Release)
-			if l.Build.IsSwift() {
-				a, err := publishSwift(p, l, targets, host, *force, *out, r)
-				switch {
-				case err != nil && host:
-					return err
-				case err != nil:
-					failed = append(failed, fmt.Sprintf("%s: %v", l.Name, err))
-				case a != "":
+			path, err := buildNative(p.dir, *l, goos, goarch, "")
+			if err == nil && !host {
+				var a string
+				var f nativelib.File
+				if a, f, err = publishNative(p.dir, *out, *l, path, goos, goarch, r); err == nil {
+					if l.Files == nil {
+						l.Files = map[string]nativelib.File{}
+					}
+					l.Files[t] = f
+					built[t] = true
 					assets = append(assets, a)
 					if r != "" {
 						uploads[r] = append(uploads[r], a)
 					}
-					l.Release = r
-					changed[p.dir] = true
 				}
-				continue
 			}
-			_, d := l.Build.Tool()
-			src := filepath.Join(p.dir, filepath.FromSlash(d))
-			before, err := nativelib.SourceHash(src, l.Build)
+			if err != nil {
+				if host {
+					return err
+				}
+				failed = append(failed, fmt.Sprintf("%s for %s: %v", l.Name, t, err))
+			}
+		}
+		if !host {
+			// After the builds, which may write into the sources, as
+			// cargo its Cargo.lock.
+			h, err := nativelib.SourceHash(src, l.Build)
 			if err != nil {
 				return err
 			}
-			built := map[string]bool{} // the platforms this run publishes
-			for _, t := range targets {
-				goos, goarch, _ := strings.Cut(t, "-")
-				if f, ok := l.Files[t]; ok && !host && !*force && f.SourceHash == before {
-					logf("%s for %s is published from these sources", l.Name, t)
-					continue
-				}
-				path, err := buildNative(p.dir, *l, goos, goarch, "")
-				if err == nil && !host {
-					var a string
-					var f nativelib.File
-					if a, f, err = publishNative(p.dir, *out, *l, path, goos, goarch, r); err == nil {
-						if l.Files == nil {
-							l.Files = map[string]nativelib.File{}
-						}
-						l.Files[t] = f
-						built[t] = true
-						assets = append(assets, a)
-						if r != "" {
-							uploads[r] = append(uploads[r], a)
-						}
-					}
-				}
-				if err != nil {
-					if host {
+			for t := range built {
+				f := l.Files[t]
+				f.SourceHash = h
+				l.Files[t] = f
+			}
+			l.Release = r
+			changed[p.dir] = true
+		}
+		return nil
+	}
+	for _, p := range pkgs {
+		if p.module != nil {
+			if _, err := nativegen.Generate(p.dir); err != nil {
+				return err
+			}
+		}
+		for i := range p.manifest.Libraries {
+			l := &p.manifest.Libraries[i]
+			r := cmp.Or(*release, l.Release)
+			if !p.isModule(*l) {
+				if l.Build != nil {
+					if err := publish(p, l, targets, r); err != nil {
 						return err
 					}
-					failed = append(failed, fmt.Sprintf("%s for %s: %v", l.Name, t, err))
 				}
+				continue
 			}
-			if !host {
-				// After the builds, which may write into the sources, as
-				// cargo its Cargo.lock.
-				h, err := nativelib.SourceHash(src, l.Build)
+			// A native module builds in the language of each platform.
+			by := moduleTargets(p.dir, targets, *lang, host)
+			if len(by) == 0 {
+				err := fmt.Errorf("native module %s has no implementation for %s", l.Name, strings.Join(targets, ", "))
+				if host || *lang != "" {
+					return err
+				}
+				logf("%v", err)
+			}
+			for _, lg := range nativegen.Langs {
+				ts, ok := by[lg]
+				if !ok {
+					continue
+				}
+				l.Build = langBuild(lg)
+				err := publish(p, l, ts, r)
+				l.Build = nil
 				if err != nil {
 					return err
 				}
-				for t := range built {
-					f := l.Files[t]
-					f.SourceHash = h
-					l.Files[t] = f
+				if !host && slices.ContainsFunc(ts, func(t string) bool { return strings.HasPrefix(t, "darwin-") }) {
+					dropStaleDarwin(l, lg == "swift")
 				}
-				l.Release = r
-				changed[p.dir] = true
 			}
 		}
 	}
@@ -229,7 +270,7 @@ func warnNativeRelease(pkgs []nativePackage, targets []string) {
 	roots := map[string]bool{}
 	for _, p := range pkgs {
 		for _, l := range p.manifest.Libraries {
-			if l.Build == nil {
+			if l = p.library(l, "linux", ""); l.Build == nil {
 				continue
 			}
 			if tool, _ := l.Build.Tool(); tool == "cargo" && linux && !zigbuild("linux", "amd64") {
@@ -268,11 +309,10 @@ func nativeTargets(s string) ([]string, error) {
 
 // nativePackagesIn returns the package in dir when it names native
 // libraries or is a native module, or else the packages under dir that
-// are. A native module's manifest names its Swift library, as
-// moduleLibrary reads it.
+// are.
 func nativePackagesIn(dir string) ([]nativePackage, error) {
 	dirs := []string{dir}
-	if _, err := os.Stat(filepath.Join(dir, pluginFile)); err != nil && !isSwiftModule(dir) {
+	if _, err := os.Stat(filepath.Join(dir, pluginFile)); err != nil && !nativegen.IsModule(dir) {
 		var out, stderr bytes.Buffer
 		cmd := goCommand(dir, nil, "list", "-e", "-f", "{{.Dir}}", "./...")
 		cmd.Stdout, cmd.Stderr = &out, &stderr
@@ -281,44 +321,42 @@ func nativePackagesIn(dir string) ([]nativePackage, error) {
 		}
 		dirs = strings.Fields(out.String())
 	}
-	pkgs, err := readNativePackages(dirs)
-	if err != nil {
-		return nil, err
-	}
-	have := map[string]int{}
-	for i, p := range pkgs {
-		have[p.dir] = i
-	}
-	for _, d := range dirs {
-		if !isSwiftModule(d) {
-			continue
-		}
-		m, err := nativegen.Load(d)
-		if err != nil {
-			return nil, err
-		}
-		lib, err := moduleLibrary(m)
-		if err != nil {
-			return nil, err
-		}
-		i, ok := have[d]
-		if !ok {
-			pkgs = append(pkgs, nativePackage{dir: d, local: isLocalPackage(d)})
-			i = len(pkgs) - 1
-		}
-		p := &pkgs[i]
-		p.module = m
-		if _, ok := p.manifest.Lookup(lib.Name); !ok {
-			p.manifest.Libraries = append(p.manifest.Libraries, lib)
-		}
-	}
-	return pkgs, nil
+	return readNativePackages(dirs)
 }
 
-// isSwiftModule reports whether dir holds a native module implemented in
-// Swift.
-func isSwiftModule(dir string) bool {
-	return nativegen.IsModule(dir) && nativegen.HasPlatform(dir, "apple")
+// dropStaleDarwin removes the macOS files of native module l that its
+// language there no longer publishes, once the new ones are there: the
+// universal build of Swift (swift false) or the two of Rust and Zig.
+func dropStaleDarwin(l *nativelib.Library, swift bool) {
+	_, arm := l.Files["darwin-arm64"]
+	_, amd := l.Files["darwin-amd64"]
+	_, universal := l.Files[nativelib.Universal]
+	switch {
+	case swift && universal:
+		delete(l.Files, "darwin-arm64")
+		delete(l.Files, "darwin-amd64")
+	case !swift && arm && amd:
+		delete(l.Files, nativelib.Universal)
+	}
+}
+
+// moduleTargets returns the platforms among targets that each language
+// of the native module in dir builds for (moduleLang), or lang alone. For
+// this machine only (host), Swift serves Linux when nothing else does, for
+// go test and go run.
+func moduleTargets(dir string, targets []string, lang string, host bool) map[string][]string {
+	by := map[string][]string{}
+	for _, t := range targets {
+		goos, _, _ := strings.Cut(t, "-")
+		l := moduleLang(dir, goos, lang)
+		if l == "" && host && goos == "linux" {
+			l = moduleLang(dir, goos, "swift")
+		}
+		if l != "" {
+			by[l] = append(by[l], t)
+		}
+	}
+	return by
 }
 
 // defaultReleaseTag is the release that mygo native build -upload uploads
@@ -340,11 +378,6 @@ func publishSwift(p nativePackage, l *nativelib.Library, targets []string, host,
 	}
 	errMac := errors.New("Swift libraries build on a Mac, with Xcode or its Command Line Tools")
 	m := p.module
-	if m != nil {
-		if _, err := nativegen.Generate(p.dir); err != nil {
-			return "", err
-		}
-	}
 	if host && runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return "", errMac // Linux builds one for go test and go run
 	}

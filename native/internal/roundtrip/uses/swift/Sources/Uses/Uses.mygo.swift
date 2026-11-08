@@ -48,7 +48,7 @@ public struct UsesError: Error, Sendable, RawRepresentable {
 // MARK: - What Go calls
 
 @_cdecl("mygo_uses_init")
-public func _mygo_init(_ cb: _MygoCallback, _ idBase: UInt64) {
+public func _mygo_init(_ cb: _MygoCallback, _ idBase: UInt64, _ malloc: UnsafeRawPointer?, _ free: UnsafeRawPointer?) {
     _mygoCallback = cb
     _mygoIDBase = idBase
 }

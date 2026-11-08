@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -55,7 +56,7 @@ func TestModuleUsingAnother(t *testing.T) {
 			t.Errorf("the Swift lacks %q", want)
 		}
 	}
-	src, err := GenerateGo(m, "")
+	src, err := GenerateGo(m, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestExampleUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, _ := Load(example)
-	src, err := GenerateGo(m, MinMacOS(m.Dir))
+	src, err := GenerateGo(m, ModuleLangs(m.Dir), MinMacOS(m.Dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,16 +171,70 @@ func TestScaffoldBuilds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "greeting.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := AddPlatform(dir, "apple"); err != nil {
+	if err := AddLang(dir, "swift"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("swift", "build", "--package-path", filepath.Join(dir, "apple")).CombinedOutput()
+	out, err := exec.Command("swift", "build", "--package-path", filepath.Join(dir, "swift")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("swift build: %v\n%s", err, out)
 	}
 	if strings.Contains(string(out), "warning:") {
 		t.Errorf("swift build warns:\n%s", out)
 	}
+}
+
+// TestScaffoldBuildsRustZig makes modules in Rust and Zig, a new one's
+// and one whose names clash with the generated code's, whose stub
+// implementations must compile against the generated declarations.
+func TestScaffoldBuildsRustZig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a crate and a Zig package")
+	}
+	clash, err := os.ReadFile("testdata/clash/clash.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lang := range []string{"rust", "zig"} {
+		tool := map[string]string{"rust": "cargo", "zig": "zig"}[lang]
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Logf("no %s", tool)
+			continue
+		}
+		for _, src := range []string{"", string(clash)} {
+			dir := filepath.Join(t.TempDir(), "greeting")
+			if err := Scaffold(dir, "greeting", nil); err != nil {
+				t.Fatal(err)
+			}
+			if src != "" {
+				src = regexp.MustCompile(`(?m)^package \w+`).ReplaceAllString(src, "package greeting")
+				if err := os.WriteFile(filepath.Join(dir, "greeting.go"), []byte(src), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := AddLang(dir, lang); err != nil {
+				t.Fatalf("%s: %v", lang, err)
+			}
+			cache := t.TempDir()
+			var cmd *exec.Cmd
+			if lang == "rust" {
+				cmd = exec.Command("cargo", "build", "--manifest-path", filepath.Join(dir, "rust", "Cargo.toml"))
+				cmd.Env = append(os.Environ(), "CARGO_TARGET_DIR="+cache)
+			} else {
+				cmd = exec.Command("zig", "build", "--prefix", filepath.Join(cache, "out"), "--cache-dir", filepath.Join(cache, "zig"))
+				cmd.Dir = filepath.Join(dir, "zig")
+			}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("%s build of %q: %v\n%s", lang, firstLine(src), err, out)
+			} else if strings.Contains(string(out), "warning") {
+				t.Errorf("%s build of %q warns:\n%s", lang, firstLine(src), out)
+			}
+		}
+	}
+}
+
+func firstLine(s string) string {
+	l, _, _ := strings.Cut(s, "\n")
+	return l
 }
 
 // TestNamesDontClash generates a module whose parameters are named as the
@@ -211,10 +266,10 @@ func TestNamesDontClash(t *testing.T) {
 	if _, err := exec.LookPath("swift"); err != nil {
 		return
 	}
-	if err := AddPlatform(dir, "apple"); err != nil {
+	if err := AddLang(dir, "swift"); err != nil {
 		t.Fatal(err)
 	}
-	out, err = exec.Command("swift", "build", "--package-path", filepath.Join(dir, "apple")).CombinedOutput()
+	out, err = exec.Command("swift", "build", "--package-path", filepath.Join(dir, "swift")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("swift build: %v\n%s", err, out)
 	}

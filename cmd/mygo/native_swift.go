@@ -27,37 +27,13 @@ import (
 // frameworks its package brings (nativelib.IsArchive), under
 // nativelib.Universal, and go into the app's Contents/Frameworks.
 
-// moduleLibrary returns the library of the native module m's Swift
-// package, as the module's mygo-plugin.json names it, or as one that
-// names only how it builds.
-func moduleLibrary(m *nativegen.Module) (nativelib.Library, error) {
-	l := nativelib.Library{Name: m.Name, Build: &nativelib.Build{Swift: "./apple"}}
-	data, err := os.ReadFile(filepath.Join(m.Dir, pluginFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return l, nil
-	} else if err != nil {
-		return l, err
-	}
-	man, err := nativelib.Parse(data)
-	if err != nil {
-		return l, fmt.Errorf("%s: %w", filepath.Join(m.Dir, pluginFile), err)
-	}
-	if found, ok := man.Lookup(m.Name); ok {
-		if !found.Build.IsSwift() {
-			return l, fmt.Errorf("%s: library %s is the native module's, which builds with swift from ./apple", filepath.Join(m.Dir, pluginFile), m.Name)
-		}
-		return found, nil
-	}
-	return l, nil
-}
-
 // moduleSourceHash hashes what the implementation of module m builds from:
 // its Swift package's sources (nativelib.SourceHash) and those of the
 // native modules it uses, whose Swift it imports and links, so that a
 // published build goes stale with theirs too. A module that uses none has
 // its package's hash.
 func moduleSourceHash(m *nativegen.Module) (string, error) {
-	own, err := nativelib.SourceHash(filepath.Join(m.Dir, "apple"), &nativelib.Build{Swift: "./apple"})
+	own, err := nativelib.SourceHash(filepath.Join(m.Dir, "swift"), &nativelib.Build{Swift: "./swift"})
 	if err != nil || len(m.Deps) == 0 {
 		return own, err
 	}

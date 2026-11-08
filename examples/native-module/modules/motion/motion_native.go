@@ -13,7 +13,7 @@ import (
 )
 
 // _module describes the module to the runtime.
-var _module = &_native.Module{Name: "Motion", Symbol: "motion", MinMacOS: "13", Dir: _dir(), Errors: []*_native.Error{}, Deps: []string{}}
+var _module = &_native.Module{Name: "Motion", Symbol: "motion", Langs: []string{"swift"}, MinMacOS: "13", Dir: _dir(), Errors: []*_native.Error{}, Deps: []string{}}
 
 // _dir returns the package's directory when the binary knows it, where
 // mygo generate builds the implementation for go test and go run.

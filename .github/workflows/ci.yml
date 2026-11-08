@@ -137,15 +137,28 @@ jobs:
         run: |
           go run ./cmd/mygo native build -target host examples/rust-native
           go test -count=1 ./examples/rust-native/...
-      # A native module's Swift, built with the runners' own (Xcode's, and
-      # the Swift of Ubuntu's image): every kind of value both ways, which
-      # go test ./... skips unbuilt. On macOS, the examples too, whose
-      # Swift uses Apple's frameworks.
+      # A native module's three implementations, built with the runners'
+      # own Swift (Xcode's, and that of Ubuntu's image) and cargo, and Zig:
+      # every kind of value both ways, which go test ./... skips unbuilt. On
+      # macOS, the examples too, whose Swift uses Apple's frameworks.
       - name: Test a native module built from its Swift
         if: runner.os != 'Windows'
         run: |
-          go run ./cmd/mygo native build -target host native/internal/roundtrip/uses  # and roundtrip, which it uses
+          go run ./cmd/mygo native build -target host -lang swift native/internal/roundtrip/uses  # and roundtrip, which it uses
           go test -count=1 ./native/internal/roundtrip/...
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Test a native module built from its Rust, and from its Zig
+        shell: bash
+        run: |
+          go test -count=1 -run TestScaffoldBuildsRustZig ./internal/nativegen
+          for lang in rust zig; do
+            go run ./cmd/mygo native build -target host -lang $lang native/internal/roundtrip
+            out=$(go test -count=1 -v ./native/internal/roundtrip) || { echo "$out"; exit 1; }
+            if grep -- '--- SKIP' <<<"$out"; then exit 1; fi  # as when the library did not load
+            echo "$lang: $(grep -c -- '--- PASS' <<<"$out") tests passed"
+          done
       - name: Build the example's native modules
         if: runner.os == 'macOS'
         working-directory: examples/native-module

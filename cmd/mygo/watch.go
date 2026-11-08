@@ -115,13 +115,19 @@ func listBuildInputs(c *Config) (*buildInputs, error) {
 		}
 		in.sourceDirs = append(in.sourceDirs, p.Dir)
 		if nativegen.IsModule(p.Dir) {
-			// A native module: its Swift package, but not what mygo dev
+			// A native module: its implementations, as the libraries
+			// below, and its Swift package's plists, but not what mygo dev
 			// generates from its interfaces.
-			apple := filepath.Join(p.Dir, "apple")
-			in.files = append(in.files, filepath.Join(apple, "Package.swift"), filepath.Join(apple, "Info.plist"), filepath.Join(apple, "Entitlements.plist"))
-			in.trees = append(in.trees, filepath.Join(apple, "Sources"))
+			swift := filepath.Join(p.Dir, "swift")
+			in.files = append(in.files, filepath.Join(swift, "Info.plist"), filepath.Join(swift, "Entitlements.plist"))
+			for _, lang := range nativegen.Langs {
+				in.natives = append(in.natives, filepath.Join(p.Dir, lang))
+			}
 			if m, err := nativegen.Load(p.Dir); err == nil {
-				in.generated = append(in.generated, filepath.Join(p.Dir, nativegen.GeneratedGo(m.Package)), filepath.Join(nativegen.SwiftDir(m), nativegen.SwiftFile(m)))
+				in.generated = append(in.generated, filepath.Join(p.Dir, nativegen.GeneratedGo(m.Package)))
+				for _, lang := range nativegen.Langs {
+					in.generated = append(in.generated, nativegen.GeneratedFile(m, lang))
+				}
 			}
 		}
 		for _, f := range p.EmbedFiles {

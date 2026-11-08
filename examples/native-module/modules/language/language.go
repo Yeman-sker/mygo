@@ -1,6 +1,6 @@
 // Package language is a native module: natural language processing with
 // Apple's NaturalLanguage framework, behind Go interfaces. Its
-// implementation is the Swift package in apple/.
+// implementation is the Swift package in swift/.
 package language
 
 import (

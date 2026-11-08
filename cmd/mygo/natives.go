@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,12 +51,22 @@ func (c *Config) natives(goos, goarch string) ([]source, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.nativesOf(pkgs, goos, goarch)
+}
+
+// nativesOf returns the native libraries of pkgs for goos/goarch, as
+// natives: those of native modules in the language that implements them
+// there, but Swift.
+func (c *Config) nativesOf(pkgs []nativePackage, goos, goarch string) ([]source, error) {
 	var list []source
 	seen := map[string]bool{}
 	for _, p := range pkgs {
 		for _, l := range p.manifest.Libraries {
-			if seen[l.Name] || l.Build.IsSwift() {
-				continue // Swift libraries go into Frameworks (prepareNative)
+			l = p.library(l, goos, "")
+			if seen[l.Name] || l.Build.IsSwift() || p.isModule(l) && l.Build == nil {
+				// Swift libraries go into Frameworks (prepareNative), and
+				// a module no language implements here is unsupported.
+				continue
 			}
 			seen[l.Name] = true
 			pick := func(goarch string) (string, string, error) {
@@ -108,8 +116,8 @@ type nativePackage struct {
 	// own, or a module it replaces with a directory, whose libraries are
 	// built from their sources.
 	local bool
-	// module is the native module the package is, whose Swift library its
-	// manifest names, read by nativePackagesIn only.
+	// module is the native module the package is, whose library its
+	// manifest names (see library).
 	module *nativegen.Module
 }
 
@@ -178,7 +186,9 @@ func (c *Config) packageDirs(goos, goarch string) ([]string, error) {
 	return dirs, nil
 }
 
-// readNativePackages reads the manifests of the packages in dirs.
+// readNativePackages reads the manifests of the packages in dirs, and
+// the native modules among them, whose library their manifest names when
+// it does not.
 func readNativePackages(dirs []string) ([]nativePackage, error) {
 	var list []nativePackage
 	for _, dir := range dirs {
@@ -186,18 +196,24 @@ func readNativePackages(dirs []string) ([]nativePackage, error) {
 		if dir == "" {
 			continue
 		}
-		path := filepath.Join(dir, pluginFile)
-		data, err := os.ReadFile(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		} else if err != nil {
+		man, ok, err := readManifest(dir)
+		if err != nil {
 			return nil, err
 		}
-		m, err := nativelib.Parse(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+		p := nativePackage{dir: dir, manifest: man, local: isLocalPackage(dir)}
+		if nativegen.IsModule(dir) {
+			m, err := nativegen.Load(dir)
+			if err != nil {
+				return nil, err
+			}
+			if err := addModuleLibrary(&p.manifest, m); err != nil {
+				return nil, err
+			}
+			p.module = m
+		} else if !ok {
+			continue
 		}
-		list = append(list, nativePackage{dir: dir, manifest: m, local: isLocalPackage(dir)})
+		list = append(list, p)
 	}
 	return list, nil
 }

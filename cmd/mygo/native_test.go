@@ -66,7 +66,7 @@ func TestPublishedSwiftLibrary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", "")
 	dir := t.TempDir()
-	src := filepath.Join(dir, "apple", "Sources", "Thing")
+	src := filepath.Join(dir, "swift", "Sources", "Thing")
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestPublishedSwiftLibrary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(dir, "apple", "Package.swift"), "// swift-tools-version: 6.0\n")
+	write(filepath.Join(dir, "swift", "Package.swift"), "// swift-tools-version: 6.0\n")
 	write(filepath.Join(src, "Thing.swift"), "func a() {}\n")
 	m := &nativegen.Module{Dir: dir, Name: "Thing"}
 	hash, err := moduleSourceHash(m)
@@ -108,14 +108,18 @@ func TestPublishedSwiftLibrary(t *testing.T) {
 	sum := sha256.Sum256(data)
 	f := nativelib.File{Name: "Thing-darwin-universal.tar.gz", URL: srv.URL + "/thing.tar.gz", SHA256: hex.EncodeToString(sum[:]), SourceHash: hash}
 
-	// The module's manifest names it, under the universal build.
-	lib := nativelib.Library{Name: "Thing", Build: &nativelib.Build{Swift: "./apple"}, Files: map[string]nativelib.File{nativelib.Universal: f}}
+	// The module's manifest names it, under the universal build, with no
+	// build: the module's languages are how it builds.
+	lib := nativelib.Library{Name: "Thing", Files: map[string]nativelib.File{nativelib.Universal: f}}
 	if err := writeManifest(filepath.Join(dir, pluginFile), nativelib.Manifest{Libraries: []nativelib.Library{lib}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := moduleLibrary(m)
+	got, err := moduleLibrary(m, "swift")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !got.Build.IsSwift() {
+		t.Fatalf("the build: %+v", got.Build)
 	}
 	for _, arch := range []string{"arm64", "amd64"} {
 		if g, ok := got.File("darwin", arch); !ok || g != f {
@@ -152,7 +156,7 @@ func TestPublishedSwiftLibrary(t *testing.T) {
 func TestModuleSourceHashDeps(t *testing.T) {
 	swift := func(dir, src string) {
 		t.Helper()
-		path := filepath.Join(dir, "apple", "Sources", "X", "X.swift")
+		path := filepath.Join(dir, "swift", "Sources", "X", "X.swift")
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +173,7 @@ func TestModuleSourceHashDeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if own, _ := nativelib.SourceHash(filepath.Join(a, "apple"), &nativelib.Build{Swift: "./apple"}); own != alone {
+	if own, _ := nativelib.SourceHash(filepath.Join(a, "swift"), &nativelib.Build{Swift: "./swift"}); own != alone {
 		t.Fatalf("a module that uses none: %s, its package's %s", alone, own)
 	}
 	before, err := moduleSourceHash(m)
@@ -274,7 +278,7 @@ func TestNativeBuildSwiftUpToDate(t *testing.T) {
 	if err := os.CopyFS(dir, os.DirFS(src)); err != nil {
 		t.Fatal(err)
 	}
-	os.RemoveAll(filepath.Join(dir, "apple", ".build"))
+	os.RemoveAll(filepath.Join(dir, "swift", ".build"))
 	m, err := nativegen.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +288,7 @@ func TestNativeBuildSwiftUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := nativelib.File{Name: "Motion-darwin-universal.tar.gz", URL: "https://example.com/x.tar.gz", SHA256: strings.Repeat("0", 64), SourceHash: hash}
-	lib := nativelib.Library{Name: "Motion", Build: &nativelib.Build{Swift: "./apple"}, Files: map[string]nativelib.File{nativelib.Universal: f}}
+	lib := nativelib.Library{Name: "Motion", Files: map[string]nativelib.File{nativelib.Universal: f}}
 	if err := writeManifest(filepath.Join(dir, pluginFile), nativelib.Manifest{Libraries: []nativelib.Library{lib}}); err != nil {
 		t.Fatal(err)
 	}

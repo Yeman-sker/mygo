@@ -9,20 +9,57 @@ import (
 	"strings"
 )
 
-// Platforms are the directories a module may implement it in.
-var Platforms = []string{"apple"}
+// Langs are the languages a module may be implemented in, each in the
+// directory of its name: a Swift package, a Rust crate or a Zig package.
+var Langs = []string{"swift", "rust", "zig"}
+
+// langManifest is the file that makes a language's directory a package.
+var langManifest = map[string]string{"swift": "Package.swift", "rust": "Cargo.toml", "zig": "build.zig"}
 
 // SwiftDir is the directory of a module's Swift sources.
-func SwiftDir(m *Module) string { return filepath.Join(m.Dir, "apple", "Sources", m.Name) }
+func SwiftDir(m *Module) string { return filepath.Join(m.Dir, "swift", "Sources", m.Name) }
 
-// HasPlatform reports whether the module in dir implements it in platform.
-func HasPlatform(dir, platform string) bool {
-	switch platform {
-	case "apple":
-		_, err := os.Stat(filepath.Join(dir, "apple", "Package.swift"))
-		return err == nil
+// HasLang reports whether the module in dir is implemented in lang.
+func HasLang(dir, lang string) bool {
+	f, ok := langManifest[lang]
+	if !ok {
+		return false
 	}
-	return false
+	_, err := os.Stat(filepath.Join(dir, lang, f))
+	return err == nil
+}
+
+// ModuleLangs returns the languages the module in dir is implemented in.
+func ModuleLangs(dir string) []string {
+	var langs []string
+	for _, l := range Langs {
+		if HasLang(dir, l) {
+			langs = append(langs, l)
+		}
+	}
+	return langs
+}
+
+// GeneratedFile is the path of the generated file of a module in lang.
+func GeneratedFile(m *Module, lang string) string {
+	switch lang {
+	case "swift":
+		return filepath.Join(SwiftDir(m), SwiftFile(m))
+	case "rust":
+		return filepath.Join(m.Dir, "rust", "src", RustFile)
+	}
+	return filepath.Join(m.Dir, "zig", "src", ZigFile)
+}
+
+// generate writes the generated file of a module in lang.
+func generate(m *Module, lang string) ([]byte, error) {
+	switch lang {
+	case "swift":
+		return GenerateSwift(m), nil
+	case "rust":
+		return GenerateRust(m)
+	}
+	return GenerateZig(m)
 }
 
 var macOSPlatform = regexp.MustCompile(`\.macOS\(\s*(?:\.v(\d+)(?:_(\d+))?|"([\d.]+)")\s*\)`)
@@ -30,7 +67,7 @@ var macOSPlatform = regexp.MustCompile(`\.macOS\(\s*(?:\.v(\d+)(?:_(\d+))?|"([\d
 // MinMacOS reads the oldest macOS the Swift package in dir supports from
 // the platforms of its Package.swift, or "" when it names none.
 func MinMacOS(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "apple", "Package.swift"))
+	data, err := os.ReadFile(filepath.Join(dir, "swift", "Package.swift"))
 	if err != nil {
 		return ""
 	}
@@ -60,15 +97,20 @@ func Generate(dir string) (*Result, error) {
 		return nil, err
 	}
 	r := &Result{Module: m}
-	goSrc, err := GenerateGo(m, MinMacOS(m.Dir))
+	langs := ModuleLangs(m.Dir)
+	goSrc, err := GenerateGo(m, langs, MinMacOS(m.Dir))
 	if err != nil {
 		return nil, err
 	}
 	if err := r.write(filepath.Join(m.Dir, GeneratedGo(m.Package)), goSrc); err != nil {
 		return nil, err
 	}
-	if HasPlatform(m.Dir, "apple") {
-		if err := r.write(filepath.Join(SwiftDir(m), SwiftFile(m)), GenerateSwift(m)); err != nil {
+	for _, lang := range langs {
+		src, err := generate(m, lang)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.write(GeneratedFile(m, lang), src); err != nil {
 			return nil, err
 		}
 	}
@@ -105,8 +147,8 @@ func Stale(dir string) ([]string, error) {
 		}
 	}
 	check(filepath.Join(m.Dir, GeneratedGo(m.Package)))
-	if HasPlatform(m.Dir, "apple") {
-		check(filepath.Join(SwiftDir(m), SwiftFile(m)))
+	for _, lang := range ModuleLangs(m.Dir) {
+		check(GeneratedFile(m, lang))
 	}
 	return stale, nil
 }
@@ -127,8 +169,8 @@ func IsModule(dir string) bool {
 }
 
 // Scaffold writes a new module named pkg in dir, implemented in the
-// platforms given.
-func Scaffold(dir, pkg string, platforms []string) error {
+// languages given.
+func Scaffold(dir, pkg string, langs []string) error {
 	if !validPackage(pkg) {
 		return fmt.Errorf("%q is not a Go package name: use lower case letters and digits, as language or media", pkg)
 	}
@@ -151,8 +193,8 @@ func Scaffold(dir, pkg string, platforms []string) error {
 	if _, err := Generate(dir); err != nil {
 		return err
 	}
-	for _, p := range platforms {
-		if err := AddPlatform(dir, p); err != nil {
+	for _, l := range langs {
+		if err := AddLang(dir, l); err != nil {
 			return err
 		}
 	}
@@ -171,29 +213,51 @@ func validPackage(s string) bool {
 	return true
 }
 
-// AddPlatform adds a platform's directory to the module in dir: a package
+// AddLang adds a language's directory to the module in dir: a package
 // whose every method says it is unsupported, so the module builds at once.
-func AddPlatform(dir, platform string) error {
-	if platform != "apple" {
-		return fmt.Errorf("unknown platform %q: modules are implemented in %s", platform, strings.Join(Platforms, ", "))
+func AddLang(dir, lang string) error {
+	if _, ok := langManifest[lang]; !ok {
+		return fmt.Errorf("unknown language %q: modules are implemented in %s", lang, strings.Join(Langs, ", "))
 	}
-	if HasPlatform(dir, platform) {
-		return fmt.Errorf("%s already has %s/", dir, platform)
+	if HasLang(dir, lang) {
+		return fmt.Errorf("%s already has %s/", dir, lang)
 	}
 	m, err := Load(dir)
 	if err != nil {
 		return err
 	}
-	pkg := filepath.Join(m.Dir, "apple")
-	if err := os.MkdirAll(SwiftDir(m), 0o755); err != nil {
-		return err
-	}
-	files := map[string][]byte{
-		filepath.Join(pkg, "Package.swift"):         []byte(strings.ReplaceAll(packageTemplate, "MODULE", m.Name)),
-		filepath.Join(pkg, ".gitignore"):            []byte("/.build\n/.swiftpm\n"),
-		filepath.Join(SwiftDir(m), m.Name+".swift"): stubSwift(m),
+	pkg := filepath.Join(m.Dir, lang)
+	var files map[string][]byte
+	switch lang {
+	case "swift":
+		files = map[string][]byte{
+			filepath.Join(pkg, "Package.swift"):         []byte(strings.ReplaceAll(packageTemplate, "MODULE", m.Name)),
+			filepath.Join(pkg, ".gitignore"):            []byte("/.build\n/.swiftpm\n"),
+			filepath.Join(SwiftDir(m), m.Name+".swift"): stubSwift(m),
+		}
+	case "rust":
+		if err := portable(m, "Rust"); err != nil {
+			return err
+		}
+		files = map[string][]byte{
+			filepath.Join(pkg, "Cargo.toml"):    []byte(strings.ReplaceAll(cargoTemplate, "PKG", m.Package)),
+			filepath.Join(pkg, ".gitignore"):    []byte("/target\n"),
+			filepath.Join(pkg, "src", "lib.rs"): stubRust(m),
+		}
+	case "zig":
+		if err := portable(m, "Zig"); err != nil {
+			return err
+		}
+		files = map[string][]byte{
+			filepath.Join(pkg, "build.zig"):             []byte(strings.ReplaceAll(zigBuildTemplate, "MODULE", m.Name)),
+			filepath.Join(pkg, ".gitignore"):            []byte("/zig-out\n/.zig-cache\n/zig-pkg\n"),
+			filepath.Join(pkg, "src", m.Package+".zig"): stubZig(m),
+		}
 	}
 	for path, data := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return err
 		}
@@ -255,8 +319,8 @@ func stubSwift(m *Module) []byte {
 	return b.Bytes()
 }
 
-const goTemplate = `// Package %[1]s is a native module: its interfaces are implemented in each
-// platform's own language, Swift in apple/ (see AGENTS.md).
+const goTemplate = `// Package %[1]s is a native module: its interfaces are implemented in
+// Swift, Rust or Zig, in the directory of the language (see AGENTS.md).
 package %[1]s
 
 // Greeter greets.
@@ -284,19 +348,37 @@ let package = Package(
 `
 
 const agentsTemplate = "# Native module PKG\n\n" +
-	"PKG is a native module of MyGo: Go interfaces implemented in a platform's own\n" +
-	"language. Read https://mygo.dev/docs/native-modules (docs/native-modules.md)\n" +
+	"PKG is a native module of MyGo: Go interfaces implemented in Swift, Rust or\n" +
+	"Zig. Read https://mygo.dev/docs/native-modules (docs/native-modules.md)\n" +
 	"before changing it.\n\n" +
 	"- `PKG.go` declares the interfaces, the types they use and the errors\n" +
 	"  (`native.NewError`): it is the contract. `//mygo:native` marks an entry point,\n" +
 	"  which gets a constructor, `NewT`.\n" +
-	"- `PKG_native.go` and `apple/Sources/MODULE/MODULE.mygo.swift` are generated:\n" +
-	"  never edit them; run `mygo generate` after changing the interfaces.\n" +
-	"- `apple/` is the Swift package implementing it on macOS: a factory\n" +
-	"  `makeT()` per entry point and classes conforming to the generated protocols.\n" +
-	"  Add Swift packages and frameworks in `apple/Package.swift`.\n\n" +
+	"- `PKG_native.go` and each language's generated file\n" +
+	"  (`swift/Sources/MODULE/MODULE.mygo.swift`, `rust/src/mygo.rs`,\n" +
+	"  `zig/src/mygo.zig`) are generated: never edit them; run `mygo generate`\n" +
+	"  after changing the interfaces.\n" +
+	"- `swift/` is a Swift package, which macOS uses when it is there, for\n" +
+	"  Apple's frameworks: a factory `makeT()` per entry point and classes\n" +
+	"  conforming to the generated protocols. Add Swift packages and frameworks\n" +
+	"  in `swift/Package.swift`.\n" +
+	"- `rust/` is a Rust crate and `zig/` a Zig package, for every platform: a\n" +
+	"  factory per entry point (`make_t` in Rust, `makeT` in Zig) and types\n" +
+	"  implementing the generated traits or declarations.\n\n" +
 	"Check the module without opening the app:\n\n" +
 	"```sh\n" +
 	"mygo native check            # generate, build and vet: every problem as file:line\n" +
 	"mygo native call Greeter.Greet '{\"name\": \"Ada\"}'   # call a method, print its result\n" +
 	"```\n"
+
+const cargoTemplate = `[package]
+name = "PKG"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+`

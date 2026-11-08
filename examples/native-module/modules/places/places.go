@@ -1,6 +1,6 @@
 // Package places is a native module of views: a map of the platform shown
 // in native UI, and the system's share menu, anchored to what the window
-// shows. Its implementation is the Swift package in apple/, with MapKit.
+// shows. Its implementation is the Swift package in swift/, with MapKit.
 package places
 
 import (

@@ -1,7 +1,8 @@
 // Package roundtrip is a native module for the tests of the runtime and
 // the generator: every kind of value that crosses, sent to the platform
-// and back, with calls of each shape. Its implementation, in apple/,
-// uses Foundation only, so that it builds on Linux too.
+// and back, with calls of each shape. It is implemented three times, in
+// swift/ (with Foundation only, so that it builds on Linux too), rust/ and
+// zig/, each of which the tests run.
 package roundtrip
 
 import (
