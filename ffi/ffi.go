@@ -2,6 +2,9 @@
 // built as a dynamic library, and binds their functions to Go functions,
 // without cgo.
 //
+// It is experimental, as native modules are: its API and mygo-plugin.json
+// may change in breaking ways in any release.
+//
 // A package names the libraries it binds in mygo-plugin.json, next to its
 // sources, with how to build them:
 //

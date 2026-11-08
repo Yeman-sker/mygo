@@ -6,7 +6,9 @@ description: Write and change native modules of MyGo apps, Go interfaces impleme
 # MyGo native modules
 
 A native module is a Go package whose interfaces Swift, Rust or Zig
-implement. Read `docs/native-modules.md` of the app's MyGo (`go list -m -f
+implement. It is experimental: after upgrading MyGo, run `mygo native
+check` and follow the release notes, as the generated code and commands
+may change. Read `docs/native-modules.md` of the app's MyGo (`go list -m -f
 '{{.Dir}}' github.com/egoist/mygo`) for the whole contract; this is the
 loop.
 

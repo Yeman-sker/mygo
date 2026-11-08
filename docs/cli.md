@@ -209,7 +209,8 @@ when there are errors.
 
 ## mygo native
 
-The commands of [native modules](native-modules.md): Go interfaces
+Experimental, as native modules are: these commands and their flags may
+change in any release. The commands of [native modules](native-modules.md): Go interfaces
 implemented in Swift, Rust or Zig, built into a library per platform, and
 of the C libraries that packages bind with `ffi`
 ([bind a C library yourself](native-modules.md#bind-a-c-library-yourself)).

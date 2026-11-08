@@ -591,7 +591,7 @@ func runNative(args []string) error {
 Native modules: Go packages whose interfaces are implemented in Swift, Rust
 or Zig, built into a library per platform and published with the package
 (docs/native-modules.md). Packages that bind a C library with ffi name it
-the same way.
+the same way. Experimental: they may change in breaking ways in any release.
 
 	build [flags] [dir]                     build the native modules and libraries of the packages in dir, ready to publish
 	new [-lang <languages>] <module name>   make a module in modules/<name>, or at a path

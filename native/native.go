@@ -1,6 +1,10 @@
 // Package native runs native modules: Go interfaces implemented in Swift,
 // Rust or Zig (see docs/native-modules.md).
 //
+// Native modules are experimental: this package, the code mygo generate
+// writes and the mygo native commands may change in breaking ways in any
+// release.
+//
 // A module's package declares its interfaces, and `mygo generate` writes
 // the rest: the constructors and the values that call the implementation,
 // which use this package. An app calls a module's constructor, NewT, and

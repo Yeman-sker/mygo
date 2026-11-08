@@ -1,5 +1,11 @@
 # Native modules
 
+**Experimental.** Native modules, and binding a C library with `ffi`, may
+change in any release, including in breaking ways: the Go side, the
+generated Swift, Rust and Zig, the `mygo native` commands and
+`mygo-plugin.json`. Release notes list each breaking change and what to
+do about it, such as regenerating with `mygo generate`.
+
 A native module is a Go interface implemented in Swift, Rust or Zig. You
 declare the interface in Go, implement what MyGo generates from it, and
 call it from Go like any other Go value: with `context.Context`, errors,
